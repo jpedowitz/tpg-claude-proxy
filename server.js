@@ -1,15 +1,27 @@
 const https = require('https');
 const http  = require('http');
+const fs    = require('fs');
+const path  = require('path');
 
 const PORT    = process.env.PORT || 3000;
 const API_KEY = process.env.ANTHROPIC_API_KEY || '';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Max-Age':       '86400',
 };
+
+// Read the JS file once at startup
+let moduleJS = '';
+const jsPath = path.join(__dirname, 'module.js');
+try {
+  moduleJS = fs.readFileSync(jsPath, 'utf8');
+  console.log('module.js loaded:', moduleJS.length, 'chars');
+} catch(e) {
+  console.warn('module.js not found at', jsPath);
+}
 
 http.createServer((req, res) => {
 
@@ -20,6 +32,17 @@ http.createServer((req, res) => {
     return;
   }
 
+  // Serve module.js as external script
+  if (req.method === 'GET' && req.url === '/module.js') {
+    res.writeHead(200, {
+      ...CORS,
+      'Content-Type': 'application/javascript',
+      'Cache-Control': 'public, max-age=60',
+    });
+    res.end(moduleJS);
+    return;
+  }
+
   // CORS preflight
   if (req.method === 'OPTIONS') {
     res.writeHead(204, CORS);
@@ -27,19 +50,16 @@ http.createServer((req, res) => {
     return;
   }
 
-  // Only accept POST to /claude
+  // Claude proxy
   if (req.method !== 'POST' || req.url !== '/claude') {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not found');
     return;
   }
 
-  // Read body
   let body = '';
   req.on('data', chunk => body += chunk);
   req.on('end', () => {
-
-    // Validate JSON
     let payload;
     try { payload = JSON.parse(body); }
     catch (e) {
@@ -48,7 +68,6 @@ http.createServer((req, res) => {
       return;
     }
 
-    // Forward to Anthropic
     const postData = Buffer.from(JSON.stringify(payload));
     const options = {
       hostname: 'api.anthropic.com',
