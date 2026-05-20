@@ -1,0 +1,12 @@
+{
+  "name": "tpg-claude-proxy",
+  "version": "1.0.0",
+  "description": "Minimal Claude API proxy for TPG HubSpot tools",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
