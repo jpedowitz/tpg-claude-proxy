@@ -526,18 +526,26 @@ function fetchAI(inputId,resultId,btnId,ctx){
       messages:[{role:'user',content:q+'\n\nInclude: 1) AI agent approach in 2-3 sentences. 2) Top 3 platforms with pricing. 3) Expected time savings. 4) Three concrete first steps this week.'}]
     })
   })
-  .then(function(r){return r.json();})
-  .then(function(d){
+  .then(function(r){
     if(timer) clearTimeout(timer);
-    var text=(d.content&&d.content[0]&&d.content[0].text)||'Unable to generate recommendations.';
+    return r.text();
+  })
+  .then(function(raw){
+    var d;
+    try{ d=JSON.parse(raw); }
+    catch(e){
+      res.textContent='Response parse error: '+raw.slice(0,300);
+      res.style.display='block';
+      btn.disabled=false; btn.textContent=originalLabel;
+      return;
+    }
+    var text=(d.content&&d.content[0]&&d.content[0].text)||(d.error?'API error: '+JSON.stringify(d.error):'No text in response.');
     res.textContent=text; res.style.display='block';
     btn.disabled=false; btn.textContent=originalLabel;
   })
   .catch(function(err){
     if(timer) clearTimeout(timer);
-    var msg = err && err.name==='AbortError'
-      ? 'Request timed out. The server may be waking up \u2014 please try again in 30 seconds.'
-      : 'Connection error. Please try again.';
+    var msg=err&&err.name==='AbortError'?'Timed out - please try again.':'Error: '+(err&&err.message||'unknown');
     res.textContent=msg; res.style.display='block';
     btn.disabled=false; btn.textContent=originalLabel;
   });
