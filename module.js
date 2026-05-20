@@ -235,7 +235,7 @@ function renderCatProcesses(cat){
     '<svg class="tpg-search-ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">' +
       '<circle cx="8.5" cy="8.5" r="5.5"/><line x1="13" y1="13" x2="18" y2="18"/>' +
     '</svg>' +
-    '<input id="tpg-search" class="tpg-search-input" type="text" placeholder="Search processes&hellip;" autocomplete="off">';
+    '<input id="tpg-search" class="tpg-search-input" type="text" placeholder="Search processes..." autocomplete="off">')
   filterBar.appendChild(searchWrap);
 
   // Use-case chips
@@ -403,7 +403,7 @@ function showDetail(proc){
     if(proc.m){
       tpgSetInnerHTML(mr,(proc.m).split(',').map(function(m){
         return '<div class="tpg-metric">'+esc(m.trim())+'</div>';
-      }).join('');
+      }).join(''));
       mr.style.display='';
     } else { mr.style.display='none'; }
   }
