@@ -509,7 +509,7 @@ function fetchAI(inputId,resultId,btnId,ctx){
 
   // Show loading state — textContent only (Trusted Types safe)
   res.textContent = 'Generating… usually takes 5–15 seconds.';
-  res.style.display='';
+  res.style.display='block';
 
   // 90-second timeout to handle Render cold starts
   var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -530,7 +530,7 @@ function fetchAI(inputId,resultId,btnId,ctx){
   .then(function(d){
     if(timer) clearTimeout(timer);
     var text=(d.content&&d.content[0]&&d.content[0].text)||'Unable to generate recommendations.';
-    res.textContent=text; res.style.display='';
+    res.textContent=text; res.style.display='block';
     btn.disabled=false; btn.textContent=originalLabel;
   })
   .catch(function(err){
@@ -538,7 +538,7 @@ function fetchAI(inputId,resultId,btnId,ctx){
     var msg = err && err.name==='AbortError'
       ? 'Request timed out. The server may be waking up \u2014 please try again in 30 seconds.'
       : 'Connection error. Please try again.';
-    res.textContent=msg; res.style.display='';
+    res.textContent=msg; res.style.display='block';
     btn.disabled=false; btn.textContent=originalLabel;
   });
 }
