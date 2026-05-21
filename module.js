@@ -954,17 +954,18 @@ else { init(); }
 
 // Expose gate submit as global so document delegation can reach it
 window.tpgSubmitGate = function(){ submitGateForm(); };
+window.submitGateForm = submitGateForm;
 
 // Document-level click delegation for gate submit button
-// Runs in page scope — works regardless of module JS scoping
 document.addEventListener('click', function(e){
-  var btn = e.target.closest('#gate-submit-btn');
-  if(btn){
+  var btn = e.target;
+  // Walk up in case user clicked the SVG inside the button
+  while(btn && btn.id !== 'gate-submit-btn' && btn !== document.body){
+    btn = btn.parentElement;
+  }
+  if(btn && btn.id === 'gate-submit-btn'){
     e.preventDefault();
-    // Find submitGateForm via any scope it might be in
-    if(typeof window.tpgSubmitGate === 'function'){
-      window.tpgSubmitGate();
-    }
+    submitGateForm();
   }
 });
 
