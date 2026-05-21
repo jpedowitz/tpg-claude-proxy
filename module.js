@@ -556,6 +556,7 @@ function fetchAI(inputId,resultId,btnId,ctx){
 
 function openGate(){
   if(!S.proc){ alert('Please select a process first.'); return; }
+  _gateProc = {p:S.proc.p, v:S.proc.v, b:S.proc.b, a:S.proc.a, m:S.proc.m};
   var nameEl = document.getElementById('gate-proc-name');
   if(nameEl) nameEl.textContent = S.proc.p;
   var mask = document.getElementById('gateMask');
