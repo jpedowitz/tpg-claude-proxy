@@ -740,12 +740,12 @@ function init(){
     });
   }
 
-  function setStatus(msg){
-    var el = document.getElementById('gate-status');
-    if(el) el.textContent = msg;
-  }
+function setStatus(msg){
+  var el = document.getElementById('gate-status');
+  if(el) el.textContent = msg;
+}
 
-  function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
+function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
     var NAVY = '#004963', LIME = '#ABCF37', TEAL = '#168FB1', CHAR = '#636466';
 
     var jspdf = window.jspdf;
@@ -954,12 +954,12 @@ function init(){
     renderPage(0);
   }
 
-  function showGateSuccess(){
-    var gen  = document.getElementById('gate-generating');
-    var succ = document.getElementById('gate-success');
-    if(gen)  gen.style.display  = 'none';
-    if(succ) succ.style.display = '';
-  }
+function showGateSuccess(){
+  var gen  = document.getElementById('gate-generating');
+  var succ = document.getElementById('gate-success');
+  if(gen)  gen.style.display  = 'none';
+  if(succ) succ.style.display = 'block';
+}
 
   // Close gate on mask click
   var mask = document.getElementById('gateMask');
@@ -971,4 +971,20 @@ function init(){
 
 if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',init); }
 else { init(); }
+
+// Expose gate submit as global so document delegation can reach it
+window.tpgSubmitGate = function(){ submitGateForm(); };
+
+// Document-level click delegation for gate submit button
+// Runs in page scope — works regardless of module JS scoping
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('#gate-submit-btn');
+  if(btn){
+    e.preventDefault();
+    // Find submitGateForm via any scope it might be in
+    if(typeof window.tpgSubmitGate === 'function'){
+      window.tpgSubmitGate();
+    }
+  }
+});
 
