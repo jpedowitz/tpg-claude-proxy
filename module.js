@@ -599,6 +599,7 @@ function init(){
   });
 
   // ── Gate modal ────────────────────────────────────────────────────────
+
   var gateClose = document.getElementById('gateClose');
   if(gateClose) gateClose.addEventListener('click', closeGate);
 
@@ -607,25 +608,25 @@ function init(){
 
   function openGate(){
     if(!S.proc){ alert('Please select a process first.'); return; }
-    var mask = document.getElementById('gateMask');
     var nameEl = document.getElementById('gate-proc-name');
     if(nameEl) nameEl.textContent = S.proc.p;
+    var mask = document.getElementById('gateMask');
     if(mask) mask.style.display = '';
     document.body.style.overflow = 'hidden';
-    // Save full context now — before form loads
-    try {
-      localStorage.setItem('tpg_agentic_report', JSON.stringify({
-        process:  S.proc.p || '',
-        category: S.cat    || '',
-        sub:      S.sub    || '',
-        vp:       S.proc.v || '',
-        before:   S.proc.b || '',
-        after:    S.proc.a || '',
-        metrics:  S.proc.m || '',
-        savedAt:  Date.now()
-      }));
-    } catch(ex){}
-    renderGateForm();
+    // Reset form to fresh state
+    var fields = document.getElementById('gate-form-fields');
+    var gen    = document.getElementById('gate-generating');
+    var succ   = document.getElementById('gate-success');
+    if(fields) fields.style.display = '';
+    if(gen)    gen.style.display    = 'none';
+    if(succ)   succ.style.display   = 'none';
+    var err = document.getElementById('gate-error');
+    if(err) err.style.display = 'none';
+    // Wire submit button
+    var submitBtn = document.getElementById('gate-submit-btn');
+    if(submitBtn){
+      submitBtn.onclick = function(){ submitGateForm(); };
+    }
   }
 
   function closeGate(){
@@ -634,41 +635,330 @@ function init(){
     document.body.style.overflow = '';
   }
 
-  // Save context and redirect after form submit
-  function handleFormSubmitted(){
-    try {
-      var payload = {
-        process:  S.proc ? S.proc.p : '',
-        category: S.cat  || '',
-        sub:      S.sub  || '',
-        vp:       S.proc ? S.proc.v : '',
-        before:   S.proc ? S.proc.b : '',
-        after:    S.proc ? S.proc.a : '',
-        metrics:  S.proc ? S.proc.m : '',
-        savedAt:  Date.now()
-      };
-      localStorage.setItem('tpg_agentic_report', JSON.stringify(payload));
-    } catch(ex){}
-    setTimeout(function(){
-      window.location.href = '/agentic-ai-report';
-    }, 800);
+  function submitGateForm(){
+    var fname   = (document.getElementById('gate-fname')   || {}).value || '';
+    var lname   = (document.getElementById('gate-lname')   || {}).value || '';
+    var email   = (document.getElementById('gate-email')   || {}).value || '';
+    var company = (document.getElementById('gate-company') || {}).value || '';
+    var errEl   = document.getElementById('gate-error');
+
+    fname   = fname.trim();
+    lname   = lname.trim();
+    email   = email.trim();
+    company = company.trim();
+
+    var emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if(!fname || !email || !emailRx.test(email)){
+      if(errEl) { errEl.style.display = ''; }
+      return;
+    }
+    if(errEl) errEl.style.display = 'none';
+
+    // Show generating state
+    var fields = document.getElementById('gate-form-fields');
+    var gen    = document.getElementById('gate-generating');
+    if(fields) fields.style.display = 'none';
+    if(gen)    gen.style.display    = '';
+
+    var proc = S.proc;
+    var cat  = S.cat || '';
+    var sub  = S.sub || '';
+
+    // Submit to HubSpot CRM in background
+    fetch('https://api.hsforms.com/submissions/v3/integration/submit/20715596/b497605e-cd88-407d-bac0-7fefd955de00', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: [
+          { name: 'firstname', value: fname },
+          { name: 'lastname',  value: lname },
+          { name: 'email',     value: email },
+          { name: 'company',   value: company }
+        ],
+        context: { pageUri: window.location.href, pageName: 'Agentic AI Capabilities Explorer' }
+      })
+    }).catch(function(){});
+
+    // Call Claude for implementation brief, then generate PDF
+    setStatus('Researching platforms and implementation approach…');
+    var prompt =
+      'You are a senior AI implementation consultant at The Pedowitz Group writing a personalized implementation brief.
+
+' +
+      'Process: ' + proc.p + '
+' +
+      'Category: ' + cat + '
+' +
+      'Sub-function: ' + sub + '
+' +
+      'Value proposition: ' + proc.v + '
+' +
+      'Current manual process: ' + (proc.b || 'Not provided') + '
+' +
+      'AI-powered process: ' + (proc.a || 'Not provided') + '
+
+' +
+      'Write a practical implementation brief with these exact sections. Be direct, no buzzwords:
+' +
+      '1. WHY THIS MATTERS NOW (2-3 sentences on business impact)
+' +
+      '2. THE AI AGENT APPROACH (explain in plain language, 3-4 sentences)
+' +
+      '3. TOP 3 PLATFORMS (name, one-line description, ballpark pricing)
+' +
+      '4. 30-DAY IMPLEMENTATION PLAN (Week 1, Week 2, Weeks 3-4 with 2-3 specific actions each)
+' +
+      '5. EXPECTED ROI (time saved per week, cost savings estimate, 3-month payback framing)
+' +
+      '6. COMMON PITFALLS (3 bullets — what most teams get wrong)
+
+' +
+      'Write for a VP of Marketing who needs to make a decision this week.';
+
+    fetch('https://tpg-claude-proxy.onrender.com/claude', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1200,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    })
+    .then(function(r){ return r.text(); })
+    .then(function(raw){
+      var d;
+      try { d = JSON.parse(raw); } catch(e){ d = {}; }
+      var brief = (d.content && d.content[0] && d.content[0].text) || 'Implementation brief unavailable.';
+      setStatus('Building your PDF report…');
+      setTimeout(function(){
+        generateAgenticPDF(fname + ' ' + lname, email, company, proc, cat, sub, brief);
+      }, 200);
+    })
+    .catch(function(){
+      setStatus('Generating report…');
+      generateAgenticPDF(fname + ' ' + lname, email, company, proc, cat, sub, 'Implementation brief could not be generated. Please contact TPG directly at pedowitzgroup.com/contact.');
+    });
   }
 
-  // V3/V4 legacy message event
-  window.addEventListener('message', function(e){
-    if(!e.data) return;
-    if(e.data.type === 'hsFormCallback' && e.data.eventName === 'onFormSubmitted'){
-      handleFormSubmitted();
+  function setStatus(msg){
+    var el = document.getElementById('gate-status');
+    if(el) el.textContent = msg;
+  }
+
+  function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
+    var NAVY = '#004963', LIME = '#ABCF37', TEAL = '#168FB1', CHAR = '#636466';
+
+    var jspdf = window.jspdf;
+    if(!jspdf){ showGateSuccess(); return; }
+    var jsPDF = jspdf.jsPDF;
+
+    // Extract times from before/after strings
+    var beforeTime = '', afterTime = '', saving = '';
+    if(proc.b){ var m=proc.b.match(/(\d+[\d\s\-–]+)\s*hours?/i); if(m) beforeTime=m[1].trim()+' hrs'; }
+    if(proc.a){ var m=proc.a.match(/(\d+[\d\s\-–]+)\s*(hours?|minutes?)/i); if(m) afterTime=m[1].trim()+(m[2].toLowerCase().startsWith('m')?' min':' hrs'); }
+    var sm=proc.a?(proc.a.match(/(\d+)%\s*time/i)||[]):[];
+    if(sm[1]) saving=sm[1]+'% time savings';
+
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:#fff;font-family:Inter,Arial,sans-serif;';
+    document.body.appendChild(wrap);
+
+    var BASE = '<style>*{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact}body,div{font-family:Inter,Arial,sans-serif}.page{width:794px;min-height:1123px;background:#fff;position:relative;overflow:hidden}.navy{background:'+NAVY+'}.lime-txt{color:'+LIME+'}.navy-txt{color:'+NAVY+'}.teal-txt{color:'+TEAL+'}.white-txt{color:#fff}.bar-t{height:6px;background:#e7e6e6;border-radius:3px;overflow:hidden}.bar-f{height:100%;border-radius:3px}.card{background:#f8f9fa;border:1px solid #dde1e5;border-radius:8px;padding:16px}.hdr{background:'+NAVY+';padding:20px 36px 16px;border-bottom:4px solid '+LIME+'}.ftr{background:'+NAVY+';padding:8px 36px;display:flex;justify-content:space-between;align-items:center;position:absolute;bottom:0;left:0;right:0}.body{padding:24px 36px 72px}.eyebrow{font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase}</style>';
+
+    // Parse brief into sections
+    var sections = {};
+    var lines = brief.split('
+');
+    var currentSection = '';
+    var currentLines = [];
+    lines.forEach(function(line){
+      var secMatch = line.match(/^\d+\.\s+([A-Z][A-Z\s&]+[A-Z])/);
+      if(secMatch){
+        if(currentSection) sections[currentSection] = currentLines.join('
+').trim();
+        currentSection = secMatch[1].trim();
+        currentLines = [];
+      } else {
+        currentLines.push(line);
+      }
+    });
+    if(currentSection) sections[currentSection] = currentLines.join('
+').trim();
+
+    function sectionHTML(key){
+      var text = '';
+      Object.keys(sections).forEach(function(k){ if(k.indexOf(key) !== -1) text = sections[k]; });
+      if(!text) return '<p style="font-size:13px;color:'+CHAR+';line-height:1.7">'+brief.slice(0,300)+'</p>';
+      var html = '';
+      text.split('
+').forEach(function(line){
+        line = line.trim();
+        if(!line) return;
+        if(/^[-•\*]/.test(line)){
+          html += '<div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start"><div style="width:6px;height:6px;border-radius:50%;background:'+LIME+';margin-top:5px;flex-shrink:0"></div><div style="font-size:12px;color:'+CHAR+';line-height:1.6">'+line.replace(/^[-•\*]\s*/,'')+'</div></div>';
+        } else {
+          html += '<p style="font-size:13px;color:'+CHAR+';line-height:1.7;margin-bottom:8px">'+line+'</p>';
+        }
+      });
+      return html;
     }
-  });
 
-  // V4 new-style event (hs-form-frame embed)
-  window.addEventListener('hs-form-event:on-submission:success', function(e){
-    handleFormSubmitted();
-  });
+    var pages = [];
 
-  function renderGateForm(){
-    // hs-form-frame renders automatically
+    // PAGE 1: Cover + AEO answer block
+    var coverHTML = BASE +
+      '<div class="page">' +
+        '<div style="background:'+NAVY+';height:100%;min-height:1123px;display:flex;flex-direction:column">' +
+          '<div style="background:'+LIME+';height:5px;flex-shrink:0"></div>' +
+          '<div style="flex:1;padding:52px 48px;display:flex;flex-direction:column;justify-content:center">' +
+            '<div class="eyebrow" style="color:'+LIME+';margin-bottom:16px">The Pedowitz Group &middot; Agentic AI Implementation Report</div>' +
+            '<div style="font-size:38px;font-weight:900;color:#fff;line-height:1.15;margin-bottom:8px;max-width:560px">'+proc.p+'</div>' +
+            '<div style="font-size:14px;color:rgba(255,255,255,.5);margin-bottom:32px">'+cat+' &rsaquo; '+sub+'</div>' +
+            '<div style="font-size:15px;font-weight:700;color:rgba(255,255,255,.45);margin-bottom:10px;font-style:italic">What does this AI process do?</div>' +
+            '<div style="font-size:17px;font-weight:700;color:#fff;line-height:1.45;max-width:580px;margin-bottom:36px;border-left:4px solid '+LIME+';padding-left:16px">'+proc.v+'</div>' +
+            (beforeTime && afterTime ?
+              '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:36px">' +
+                '<div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:12px 18px;text-align:center"><div style="font-size:20px;font-weight:700;color:rgba(255,100,100,.85)">'+beforeTime+'</div><div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:3px">manually today</div></div>' +
+                '<div style="font-size:18px;color:rgba(255,255,255,.2)">&rarr;</div>' +
+                '<div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:12px 18px;text-align:center"><div style="font-size:20px;font-weight:700;color:'+LIME+'">'+afterTime+'</div><div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:3px">with AI agents</div></div>' +
+                (saving ? '<div style="background:'+LIME+';color:'+NAVY+';border-radius:6px;padding:8px 14px;font-weight:700;font-size:13px">'+saving+'</div>' : '') +
+              '</div>' : '') +
+            '<div style="display:flex;gap:12px;flex-wrap:wrap">' +
+              '<div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:10px 16px"><div style="font-size:10px;color:rgba(255,255,255,.45);text-transform:uppercase;letter-spacing:1px">Prepared for</div><div style="font-size:14px;font-weight:700;color:#fff">'+name+'</div>'+(email?'<div style="font-size:11px;color:rgba(255,255,255,.5)">'+email+'</div>':'')+('</div>') +
+              (company ? '<div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:10px 16px"><div style="font-size:10px;color:rgba(255,255,255,.45);text-transform:uppercase;letter-spacing:1px">Organization</div><div style="font-size:14px;font-weight:700;color:#fff">'+company+'</div></div>' : '') +
+            '</div>' +
+          '</div>' +
+          '<div style="background:'+LIME+';padding:10px 48px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0">' +
+            '<span style="font-size:10px;font-weight:700;color:'+NAVY+'">CONFIDENTIAL &middot; AGENTIC AI IMPLEMENTATION REPORT &middot; THE PEDOWITZ GROUP</span>' +
+            '<span style="font-size:10px;font-weight:700;color:'+NAVY+'">pedowitzgroup.com</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    var d1 = document.createElement('div');
+    d1.innerHTML = coverHTML;
+    pages.push(d1.querySelector('.page'));
+
+    // PAGE 2: Before/After timelines + Why it matters + AI approach
+    var parseStepsLocal = function(str){
+      if(!str) return [];
+      var parts = str.split(/\s*→\s*/);
+      return parts.map(function(s){
+        s = s.trim().replace(/\.\s*\d+%.*$/i,'');
+        if(!s || s.length < 4) return null;
+        var tm = s.match(/\(([^)]*(?:h(?:our)?s?|m(?:in)?s?)[^)]*)\)/i);
+        var time = tm ? tm[1] : '';
+        var name2 = s.replace(/\([^)]*\)/g,'').replace(/^\d+\.\s*/,'').replace(/^\d+\s+steps?,\s*[^:]+:\s*/i,'').trim();
+        return name2 ? {name:name2, time:time} : null;
+      }).filter(Boolean).slice(0,6);
+    };
+
+    var beforeSteps = parseStepsLocal(proc.b);
+    var afterSteps  = parseStepsLocal(proc.a);
+
+    var stepsBeforeHTML = beforeSteps.map(function(s,i){
+      return '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px">' +
+        '<div style="width:18px;height:18px;border-radius:50%;background:#fce8e8;color:#c0392b;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">'+(i+1)+'</div>' +
+        '<div style="flex:1"><div style="font-size:12px;font-weight:600;color:'+NAVY+';line-height:1.35">'+s.name+'</div>'+(s.time?'<span style="font-size:10px;font-weight:600;background:#fdf3d0;color:#8a6800;border-radius:3px;padding:1px 5px;display:inline-block;margin-top:2px">'+s.time+'</span>':'')+'</div>' +
+      '</div>';
+    }).join('') || '<p style="font-size:12px;color:'+CHAR+'">'+proc.b+'</p>';
+
+    var stepsAfterHTML = afterSteps.map(function(s,i){
+      return '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px">' +
+        '<div style="width:18px;height:18px;border-radius:50%;background:#edf5e0;color:#27ae60;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">'+(i+1)+'</div>' +
+        '<div style="flex:1"><div style="font-size:12px;font-weight:600;color:'+NAVY+';line-height:1.35">'+s.name+'</div>'+(s.time?'<span style="font-size:10px;font-weight:600;background:#edf5e0;color:#27ae60;border-radius:3px;padding:1px 5px;display:inline-block;margin-top:2px">'+s.time+'</span>':'')+'</div>' +
+      '</div>';
+    }).join('') || '<p style="font-size:12px;color:'+CHAR+'">'+proc.a+'</p>';
+
+    var page2HTML = BASE +
+      '<div class="page">' +
+        '<div class="hdr"><div class="eyebrow" style="color:rgba(255,255,255,.5);margin-bottom:3px">The Pedowitz Group &middot; Agentic AI Implementation Report</div><div style="font-size:15px;font-weight:800;color:#fff">Workflow Analysis &amp; Strategic Brief</div><div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">'+proc.p+'</div></div>' +
+        '<div class="body">' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">' +
+            '<div class="card" style="border-left:4px solid #c0392b"><div style="font-weight:700;color:#c0392b;font-size:13px;margin-bottom:10px">&#10007; Manual Process Today</div>'+stepsBeforeHTML+'</div>' +
+            '<div class="card" style="border-left:4px solid #27ae60"><div style="font-weight:700;color:#27ae60;font-size:13px;margin-bottom:10px">&#10003; With AI Agents</div>'+stepsAfterHTML+'</div>' +
+          '</div>' +
+          '<div style="background:'+NAVY+';border-radius:10px;padding:18px 22px;margin-bottom:16px">' +
+            '<div class="eyebrow" style="color:'+LIME+';margin-bottom:8px">Why This Matters Now</div>' +
+            sectionHTML('WHY') +
+          '</div>' +
+          '<div class="card" style="margin-bottom:16px">' +
+            '<div class="eyebrow" style="color:'+TEAL+';margin-bottom:8px">The AI Agent Approach</div>' +
+            sectionHTML('APPROACH') +
+          '</div>' +
+          '<div class="card">' +
+            '<div class="eyebrow" style="color:'+TEAL+';margin-bottom:8px">Top 3 Platforms</div>' +
+            sectionHTML('PLATFORMS') +
+          '</div>' +
+        '</div>' +
+        '<div class="ftr"><span style="font-size:10px;color:rgba(255,255,255,.5)">The Pedowitz Group &middot; pedowitzgroup.com</span><span style="font-size:10px;color:'+LIME+';font-weight:700">'+email+'</span></div>' +
+      '</div>';
+    var d2 = document.createElement('div');
+    d2.innerHTML = page2HTML;
+    pages.push(d2.querySelector('.page'));
+
+    // PAGE 3: 30-day plan + ROI + pitfalls + CTA
+    var page3HTML = BASE +
+      '<div class="page">' +
+        '<div class="hdr"><div class="eyebrow" style="color:rgba(255,255,255,.5);margin-bottom:3px">The Pedowitz Group &middot; Agentic AI Implementation Report</div><div style="font-size:15px;font-weight:800;color:#fff">Implementation Plan &amp; ROI</div><div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">'+proc.p+'</div></div>' +
+        '<div class="body">' +
+          '<div style="margin-bottom:16px">' +
+            '<div class="eyebrow" style="color:'+NAVY+';margin-bottom:8px">30-Day Implementation Plan</div>' +
+            '<div class="card">'+sectionHTML('30-DAY')+'</div>' +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">' +
+            '<div class="card" style="border-left:4px solid '+LIME+'"><div class="eyebrow" style="color:'+NAVY+';margin-bottom:8px">Expected ROI</div>'+sectionHTML('ROI')+'</div>' +
+            '<div class="card" style="border-left:4px solid #c0392b"><div class="eyebrow" style="color:#c0392b;margin-bottom:8px">Common Pitfalls</div>'+sectionHTML('PITFALLS')+'</div>' +
+          '</div>' +
+          '<div style="background:'+LIME+';border-radius:12px;padding:24px 28px;text-align:center">' +
+            '<div style="font-size:20px;font-weight:800;color:'+NAVY+';margin-bottom:6px">Ready to implement this with TPG?</div>' +
+            '<div style="font-size:13px;color:'+NAVY+';margin-bottom:10px;opacity:.8">Our AI practice has deployed agentic processes like this for 1,500+ clients. We can have you running in 30 days.</div>' +
+            '<div style="font-size:16px;font-weight:800;color:'+NAVY+'">pedowitzgroup.com/contact</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="ftr"><span style="font-size:10px;color:rgba(255,255,255,.5)">The Pedowitz Group &middot; pedowitzgroup.com</span><span style="font-size:10px;color:'+LIME+';font-weight:700">'+email+'</span></div>' +
+      '</div>';
+    var d3 = document.createElement('div');
+    d3.innerHTML = page3HTML;
+    pages.push(d3.querySelector('.page'));
+
+    // Render pages to PDF
+    var pdf = new jsPDF('p','mm','a4');
+    var PW  = pdf.internal.pageSize.getWidth();
+    var PH  = pdf.internal.pageSize.getHeight();
+
+    function renderPage(idx){
+      if(idx >= pages.length){
+        document.body.removeChild(wrap);
+        pdf.save('TPG-Agentic-AI-Report.pdf');
+        showGateSuccess();
+        return;
+      }
+      wrap.innerHTML = '';
+      wrap.appendChild(pages[idx]);
+      // Force layout
+      void wrap.offsetHeight;
+      window.html2canvas(pages[idx], {
+        scale:2, useCORS:true, allowTaint:false,
+        backgroundColor:'#ffffff', width:794, windowWidth:794,
+        height:pages[idx].scrollHeight||1123, logging:false
+      }).then(function(canvas){
+        var imgData = canvas.toDataURL('image/jpeg', 0.92);
+        if(idx > 0) pdf.addPage();
+        pdf.addImage(imgData,'JPEG',0,0,PW,PH,undefined,'FAST');
+        renderPage(idx + 1);
+      }).catch(function(){
+        renderPage(idx + 1);
+      });
+    }
+
+    renderPage(0);
+  }
+
+  function showGateSuccess(){
+    var gen  = document.getElementById('gate-generating');
+    var succ = document.getElementById('gate-success');
+    if(gen)  gen.style.display  = 'none';
+    if(succ) succ.style.display = '';
   }
 
   // Close gate on mask click
