@@ -681,38 +681,21 @@ function init(){
 
     // Call Claude for implementation brief, then generate PDF
     setStatus('Researching platforms and implementation approach…');
-    var prompt =
-      'You are a senior AI implementation consultant at The Pedowitz Group writing a personalized implementation brief.
-
-' +
-      'Process: ' + proc.p + '
-' +
-      'Category: ' + cat + '
-' +
-      'Sub-function: ' + sub + '
-' +
-      'Value proposition: ' + proc.v + '
-' +
-      'Current manual process: ' + (proc.b || 'Not provided') + '
-' +
-      'AI-powered process: ' + (proc.a || 'Not provided') + '
-
-' +
-      'Write a practical implementation brief with these exact sections. Be direct, no buzzwords:
-' +
-      '1. WHY THIS MATTERS NOW (2-3 sentences on business impact)
-' +
-      '2. THE AI AGENT APPROACH (explain in plain language, 3-4 sentences)
-' +
-      '3. TOP 3 PLATFORMS (name, one-line description, ballpark pricing)
-' +
-      '4. 30-DAY IMPLEMENTATION PLAN (Week 1, Week 2, Weeks 3-4 with 2-3 specific actions each)
-' +
-      '5. EXPECTED ROI (time saved per week, cost savings estimate, 3-month payback framing)
-' +
-      '6. COMMON PITFALLS (3 bullets — what most teams get wrong)
-
-' +
+    var proc = S.proc;
+    var cat  = S.cat || '';
+    var sub  = S.sub || '';
+    var prompt = 'You are a senior AI implementation consultant at The Pedowitz Group. ' +
+      'Process: ' + proc.p + '. Category: ' + cat + '. Sub-function: ' + sub + '. ' +
+      'Value proposition: ' + proc.v + '. ' +
+      'Current manual process: ' + (proc.b || 'Not provided') + '. ' +
+      'AI-powered process: ' + (proc.a || 'Not provided') + '. ' +
+      'Write a practical implementation brief with these exact sections: ' +
+      '1. WHY THIS MATTERS NOW (2-3 sentences on business impact). ' +
+      '2. THE AI AGENT APPROACH (plain language, 3-4 sentences). ' +
+      '3. TOP 3 PLATFORMS (name, one-line description, ballpark pricing). ' +
+      '4. 30-DAY IMPLEMENTATION PLAN (Week 1, Week 2, Weeks 3-4 with 2-3 specific actions each). ' +
+      '5. EXPECTED ROI (time saved per week, cost savings estimate, 3-month payback framing). ' +
+      '6. COMMON PITFALLS (3 bullets - what most teams get wrong). ' +
       'Write for a VP of Marketing who needs to make a decision this week.';
 
     fetch('https://tpg-claude-proxy.onrender.com/claude', {
@@ -767,31 +750,27 @@ function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
 
     // Parse brief into sections
     var sections = {};
-    var lines = brief.split('
-');
+    var lines = brief.split('\n');
     var currentSection = '';
     var currentLines = [];
     lines.forEach(function(line){
       var secMatch = line.match(/^\d+\.\s+([A-Z][A-Z\s&]+[A-Z])/);
       if(secMatch){
-        if(currentSection) sections[currentSection] = currentLines.join('
-').trim();
+        if(currentSection) sections[currentSection] = currentLines.join('\n').trim();
         currentSection = secMatch[1].trim();
         currentLines = [];
       } else {
         currentLines.push(line);
       }
     });
-    if(currentSection) sections[currentSection] = currentLines.join('
-').trim();
+    if(currentSection) sections[currentSection] = currentLines.join('\n').trim();
 
     function sectionHTML(key){
       var text = '';
       Object.keys(sections).forEach(function(k){ if(k.indexOf(key) !== -1) text = sections[k]; });
       if(!text) return '<p style="font-size:13px;color:'+CHAR+';line-height:1.7">'+brief.slice(0,300)+'</p>';
       var html = '';
-      text.split('
-').forEach(function(line){
+      text.split('\n').forEach(function(line){
         line = line.trim();
         if(!line) return;
         if(/^[-•\*]/.test(line)){
