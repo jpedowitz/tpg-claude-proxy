@@ -541,6 +541,7 @@ function fetchAI(inputId,resultId,btnId,ctx){
     }
     var text=(d.content&&d.content[0]&&d.content[0].text)||(d.error?'API error: '+JSON.stringify(d.error):'No text in response.');
     res.textContent=text; res.style.display='block';
+    res.scrollIntoView({behavior:'smooth',block:'nearest'});
     btn.disabled=false; btn.textContent=originalLabel;
   })
   .catch(function(err){
@@ -610,6 +611,20 @@ function init(){
     if(nameEl && S.proc) nameEl.textContent = S.proc.p;
     if(mask) mask.style.display = '';
     document.body.style.overflow = 'hidden';
+    // Save context NOW so it's ready when form redirects to report page
+    try {
+      var payload = {
+        process:  S.proc ? S.proc.p : '',
+        category: S.cat  || '',
+        sub:      S.sub  || '',
+        vp:       S.proc ? S.proc.v : '',
+        before:   S.proc ? S.proc.b : '',
+        after:    S.proc ? S.proc.a : '',
+        metrics:  S.proc ? S.proc.m : '',
+        savedAt:  Date.now()
+      };
+      localStorage.setItem('tpg_agentic_report', JSON.stringify(payload));
+    } catch(ex){}
     renderGateForm();
   }
 
@@ -619,38 +634,41 @@ function init(){
     document.body.style.overflow = '';
   }
 
-  function renderGateForm(){
-    var target = document.getElementById('gate-hs-form');
-    if(!target || target.hasChildNodes()) return; // already rendered
-    if(typeof hbspt === 'undefined'){
-      setTimeout(renderGateForm, 300); return;
+  // Save context and redirect after form submit
+  function handleFormSubmitted(){
+    try {
+      var payload = {
+        process:  S.proc ? S.proc.p : '',
+        category: S.cat  || '',
+        sub:      S.sub  || '',
+        vp:       S.proc ? S.proc.v : '',
+        before:   S.proc ? S.proc.b : '',
+        after:    S.proc ? S.proc.a : '',
+        metrics:  S.proc ? S.proc.m : '',
+        savedAt:  Date.now()
+      };
+      localStorage.setItem('tpg_agentic_report', JSON.stringify(payload));
+    } catch(ex){}
+    setTimeout(function(){
+      window.location.href = '/agentic-ai-report';
+    }, 800);
+  }
+
+  // V3/V4 legacy message event
+  window.addEventListener('message', function(e){
+    if(!e.data) return;
+    if(e.data.type === 'hsFormCallback' && e.data.eventName === 'onFormSubmitted'){
+      handleFormSubmitted();
     }
-    hbspt.forms.create({
-      region:   'na1',
-      portalId: '20715596',
-      formId:   'REPLACE_WITH_YOUR_FORM_GUID',  // ← paste your HubSpot form GUID here
-      target:   '#gate-hs-form',
-      onFormSubmitted: function(){
-        // Store context for the report page
-        try {
-          var payload = {
-            process:     S.proc ? S.proc.p : '',
-            category:    S.cat  || '',
-            sub:         S.sub  || '',
-            vp:          S.proc ? S.proc.v : '',
-            before:      S.proc ? S.proc.b : '',
-            after:       S.proc ? S.proc.a : '',
-            metrics:     S.proc ? S.proc.m : '',
-            savedAt:     Date.now()
-          };
-          localStorage.setItem('tpg_agentic_report', JSON.stringify(payload));
-        } catch(e){}
-        // Redirect to report page
-        setTimeout(function(){
-          window.location.href = '/agentic-ai-report';
-        }, 800);
-      }
-    });
+  });
+
+  // V4 new-style event (hs-form-frame embed)
+  window.addEventListener('hs-form-event:on-submission:success', function(e){
+    handleFormSubmitted();
+  });
+
+  function renderGateForm(){
+    // hs-form-frame renders automatically
   }
 
   // Close gate on mask click
