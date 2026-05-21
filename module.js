@@ -635,94 +635,95 @@ function init(){
     document.body.style.overflow = '';
   }
 
-  function submitGateForm(){
-    var fname   = (document.getElementById('gate-fname')   || {}).value || '';
-    var lname   = (document.getElementById('gate-lname')   || {}).value || '';
-    var email   = (document.getElementById('gate-email')   || {}).value || '';
-    var company = (document.getElementById('gate-company') || {}).value || '';
-    var errEl   = document.getElementById('gate-error');
 
-    fname   = fname.trim();
-    lname   = lname.trim();
-    email   = email.trim();
-    company = company.trim();
 
-    var emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if(!fname || !email || !emailRx.test(email)){
-      if(errEl) { errEl.style.display = ''; }
-      return;
-    }
-    if(errEl) errEl.style.display = 'none';
+function submitGateForm(){
+  var fname   = (document.getElementById('gate-fname')   || {}).value || '';
+  var lname   = (document.getElementById('gate-lname')   || {}).value || '';
+  var email   = (document.getElementById('gate-email')   || {}).value || '';
+  var company = (document.getElementById('gate-company') || {}).value || '';
+  var errEl   = document.getElementById('gate-error');
 
-    // Show generating state
-    var fields = document.getElementById('gate-form-fields');
-    var gen    = document.getElementById('gate-generating');
-    if(fields) fields.style.display = 'none';
-    if(gen)    gen.style.display    = '';
+  fname   = fname.trim();
+  lname   = lname.trim();
+  email   = email.trim();
+  company = company.trim();
 
-    var proc = S.proc;
-    var cat  = S.cat || '';
-    var sub  = S.sub || '';
-
-    // Submit to HubSpot CRM in background
-    fetch('https://api.hsforms.com/submissions/v3/integration/submit/20715596/b497605e-cd88-407d-bac0-7fefd955de00', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fields: [
-          { name: 'firstname', value: fname },
-          { name: 'lastname',  value: lname },
-          { name: 'email',     value: email },
-          { name: 'company',   value: company }
-        ],
-        context: { pageUri: window.location.href, pageName: 'Agentic AI Capabilities Explorer' }
-      })
-    }).catch(function(){});
-
-    // Call Claude for implementation brief, then generate PDF
-    setStatus('Researching platforms and implementation approach…');
-    var proc = S.proc;
-    var cat  = S.cat || '';
-    var sub  = S.sub || '';
-    var prompt = 'You are a senior AI implementation consultant at The Pedowitz Group. ' +
-      'Process: ' + proc.p + '. Category: ' + cat + '. Sub-function: ' + sub + '. ' +
-      'Value proposition: ' + proc.v + '. ' +
-      'Current manual process: ' + (proc.b || 'Not provided') + '. ' +
-      'AI-powered process: ' + (proc.a || 'Not provided') + '. ' +
-      'Write a practical implementation brief with these exact sections: ' +
-      '1. WHY THIS MATTERS NOW (2-3 sentences on business impact). ' +
-      '2. THE AI AGENT APPROACH (plain language, 3-4 sentences). ' +
-      '3. TOP 3 PLATFORMS (name, one-line description, ballpark pricing). ' +
-      '4. 30-DAY IMPLEMENTATION PLAN (Week 1, Week 2, Weeks 3-4 with 2-3 specific actions each). ' +
-      '5. EXPECTED ROI (time saved per week, cost savings estimate, 3-month payback framing). ' +
-      '6. COMMON PITFALLS (3 bullets - what most teams get wrong). ' +
-      'Write for a VP of Marketing who needs to make a decision this week.';
-
-    fetch('https://tpg-claude-proxy.onrender.com/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1200,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    })
-    .then(function(r){ return r.text(); })
-    .then(function(raw){
-      var d;
-      try { d = JSON.parse(raw); } catch(e){ d = {}; }
-      var brief = (d.content && d.content[0] && d.content[0].text) || 'Implementation brief unavailable.';
-      setStatus('Building your PDF report…');
-      setTimeout(function(){
-        generateAgenticPDF(fname + ' ' + lname, email, company, proc, cat, sub, brief);
-      }, 200);
-    })
-    .catch(function(){
-      setStatus('Generating report…');
-      generateAgenticPDF(fname + ' ' + lname, email, company, proc, cat, sub, 'Implementation brief could not be generated. Please contact TPG directly at pedowitzgroup.com/contact.');
-    });
+  var emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if(!fname || !email || !emailRx.test(email)){
+    if(errEl) { errEl.style.display = ''; }
+    return;
   }
+  if(errEl) errEl.style.display = 'none';
 
+  // Show generating state
+  var fields = document.getElementById('gate-form-fields');
+  var gen    = document.getElementById('gate-generating');
+  if(fields) fields.style.display = 'none';
+  if(gen)    gen.style.display    = '';
+
+  var proc = S.proc;
+  var cat  = S.cat || '';
+  var sub  = S.sub || '';
+
+  // Submit to HubSpot CRM in background
+  fetch('https://api.hsforms.com/submissions/v3/integration/submit/20715596/b497605e-cd88-407d-bac0-7fefd955de00', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fields: [
+        { name: 'firstname', value: fname },
+        { name: 'lastname',  value: lname },
+        { name: 'email',     value: email },
+        { name: 'company',   value: company }
+      ],
+      context: { pageUri: window.location.href, pageName: 'Agentic AI Capabilities Explorer' }
+    })
+  }).catch(function(){});
+
+  // Call Claude for implementation brief, then generate PDF
+  setStatus('Researching platforms and implementation approach…');
+  var proc = S.proc;
+  var cat  = S.cat || '';
+  var sub  = S.sub || '';
+  var prompt = 'You are a senior AI implementation consultant at The Pedowitz Group. ' +
+    'Process: ' + proc.p + '. Category: ' + cat + '. Sub-function: ' + sub + '. ' +
+    'Value proposition: ' + proc.v + '. ' +
+    'Current manual process: ' + (proc.b || 'Not provided') + '. ' +
+    'AI-powered process: ' + (proc.a || 'Not provided') + '. ' +
+    'Write a practical implementation brief with these exact sections: ' +
+    '1. WHY THIS MATTERS NOW (2-3 sentences on business impact). ' +
+    '2. THE AI AGENT APPROACH (plain language, 3-4 sentences). ' +
+    '3. TOP 3 PLATFORMS (name, one-line description, ballpark pricing). ' +
+    '4. 30-DAY IMPLEMENTATION PLAN (Week 1, Week 2, Weeks 3-4 with 2-3 specific actions each). ' +
+    '5. EXPECTED ROI (time saved per week, cost savings estimate, 3-month payback framing). ' +
+    '6. COMMON PITFALLS (3 bullets - what most teams get wrong). ' +
+    'Write for a VP of Marketing who needs to make a decision this week.';
+
+  fetch('https://tpg-claude-proxy.onrender.com/claude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1200,
+      messages: [{ role: 'user', content: prompt }]
+    })
+  })
+  .then(function(r){ return r.text(); })
+  .then(function(raw){
+    var d;
+    try { d = JSON.parse(raw); } catch(e){ d = {}; }
+    var brief = (d.content && d.content[0] && d.content[0].text) || 'Implementation brief unavailable.';
+    setStatus('Building your PDF report…');
+    setTimeout(function(){
+      generateAgenticPDF(fname + ' ' + lname, email, company, proc, cat, sub, brief);
+    }, 200);
+  })
+  .catch(function(){
+    setStatus('Generating report…');
+    generateAgenticPDF(fname + ' ' + lname, email, company, proc, cat, sub, 'Implementation brief could not be generated. Please contact TPG directly at pedowitzgroup.com/contact.');
+  });
+}
 function setStatus(msg){
   var el = document.getElementById('gate-status');
   if(el) el.textContent = msg;
