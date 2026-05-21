@@ -20,6 +20,7 @@ function tpgSetInnerHTML(el, html){
 }
 
 var S = { cat:'', sub:'', proc:null, data:{} };
+var _gateProc = null; // captured when gate opens
 
 var CAT_META = {
   'Brand Management':     { desc:'Monitor sentiment, manage reputation, and enforce voice consistency across every channel.' },
@@ -609,10 +610,6 @@ var gen    = document.getElementById('gate-generating');
 if(fields) fields.style.display = 'none';
 if(gen)    gen.style.display    = '';
 
-var proc = S.proc;
-var cat  = S.cat || '';
-var sub  = S.sub || '';
-
 // Submit to HubSpot CRM in background
 fetch('https://api.hsforms.com/submissions/v3/integration/submit/20715596/b497605e-cd88-407d-bac0-7fefd955de00', {
   method: 'POST',
@@ -629,10 +626,20 @@ fetch('https://api.hsforms.com/submissions/v3/integration/submit/20715596/b49760
 }).catch(function(){});
 
 // Call Claude for implementation brief, then generate PDF
-setStatus('Researching platforms and implementation approach…');
-var proc = S.proc;
+// Re-read S.proc in case it changed; guard against null
+var proc = _gateProc || S.proc;
 var cat  = S.cat || '';
 var sub  = S.sub || '';
+if(!proc){
+  var errEl2 = document.getElementById('gate-error');
+  if(errEl2){ errEl2.textContent = 'Please navigate back and select a process first.'; errEl2.style.display = ''; }
+  var gen2 = document.getElementById('gate-generating');
+  if(gen2) gen2.style.display = 'none';
+  var fields2 = document.getElementById('gate-form-fields');
+  if(fields2) fields2.style.display = '';
+  return;
+}
+setStatus('Researching platforms and implementation approach…');
 var prompt = 'You are a senior AI implementation consultant at The Pedowitz Group. ' +
   'Process: ' + proc.p + '. Category: ' + cat + '. Sub-function: ' + sub + '. ' +
   'Value proposition: ' + proc.v + '. ' +
