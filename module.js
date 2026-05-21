@@ -606,24 +606,24 @@ function init(){
   if(btnReport) btnReport.addEventListener('click', openGate);
 
   function openGate(){
+    if(!S.proc){ alert('Please select a process first.'); return; }
     var mask = document.getElementById('gateMask');
     var nameEl = document.getElementById('gate-proc-name');
-    if(nameEl && S.proc) nameEl.textContent = S.proc.p;
+    if(nameEl) nameEl.textContent = S.proc.p;
     if(mask) mask.style.display = '';
     document.body.style.overflow = 'hidden';
-    // Save context NOW so it's ready when form redirects to report page
+    // Save full context now — before form loads
     try {
-      var payload = {
-        process:  S.proc ? S.proc.p : '',
-        category: S.cat  || '',
-        sub:      S.sub  || '',
-        vp:       S.proc ? S.proc.v : '',
-        before:   S.proc ? S.proc.b : '',
-        after:    S.proc ? S.proc.a : '',
-        metrics:  S.proc ? S.proc.m : '',
+      localStorage.setItem('tpg_agentic_report', JSON.stringify({
+        process:  S.proc.p || '',
+        category: S.cat    || '',
+        sub:      S.sub    || '',
+        vp:       S.proc.v || '',
+        before:   S.proc.b || '',
+        after:    S.proc.a || '',
+        metrics:  S.proc.m || '',
         savedAt:  Date.now()
-      };
-      localStorage.setItem('tpg_agentic_report', JSON.stringify(payload));
+      }));
     } catch(ex){}
     renderGateForm();
   }
