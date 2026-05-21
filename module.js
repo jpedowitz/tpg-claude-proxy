@@ -391,15 +391,8 @@ function renderCatProcesses(cat){
 
 function showDetail(proc){
   S.proc=proc;
-  // Store snapshot on report button for gate to read
-  setTimeout(function(){
-    var btn = document.getElementById('btn-get-report');
-    if(btn){
-      btn.setAttribute('data-proc', JSON.stringify({p:proc.p,v:proc.v,b:proc.b,a:proc.a,m:proc.m}));
-      btn.setAttribute('data-cat', S.cat||'');
-      btn.setAttribute('data-sub', S.sub||'');
-    }
-  }, 0);
+  // Capture snapshot immediately for gate to use
+  _gateProc = {p:proc.p, v:proc.v, b:proc.b, a:proc.a, m:proc.m};
   setText('aeo-cat', S.cat+' \u00b7 '+S.sub);
   setText('aeo-q',   'What does \u201c'+proc.p+'\u201d do with AI?');
   setText('aeo-a',   proc.v);
@@ -564,18 +557,6 @@ function fetchAI(inputId,resultId,btnId,ctx){
 
 
 function openGate(){
-  // Read proc from button data attribute (most reliable) or fall back to S.proc
-  var btn = document.getElementById('btn-get-report');
-  var procData = btn ? btn.getAttribute('data-proc') : null;
-  if(procData){
-    try{ _gateProc = JSON.parse(procData); } catch(e){ _gateProc = null; }
-    var cat = (btn.getAttribute('data-cat')||'').trim();
-    var sub = (btn.getAttribute('data-sub')||'').trim();
-    if(cat) S.cat = cat;
-    if(sub) S.sub = sub;
-  } else if(S.proc){
-    _gateProc = {p:S.proc.p, v:S.proc.v, b:S.proc.b, a:S.proc.a, m:S.proc.m};
-  }
   if(!_gateProc){ alert('Please select a process first.'); return; }
   var nameEl = document.getElementById('gate-proc-name');
   if(nameEl) nameEl.textContent = S.proc.p;
