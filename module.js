@@ -70,7 +70,7 @@ function setHTML(i,h){
 }
 function show(i){ var e=$id(i); if(e) e.style.display=''; }
 function hide(i){ var e=$id(i); if(e) e.style.display='none'; }
-function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 var STEPS = ['land','cat','sub','detail'];
 function goTo(step){
@@ -563,7 +563,6 @@ function submitGateForm(){
 
   setStatus('Researching your process\u2026');
 
-  // ── JSON-structured prompt — no markdown parsing needed ────────────────
   var prompt =
     'You are a senior B2B AI implementation consultant at The Pedowitz Group. ' +
     'Return ONLY valid compact JSON, no markdown, no explanation, no code fences. ' +
@@ -600,23 +599,31 @@ function setStatus(msg){
   if(el) el.textContent = msg;
 }
 
-
+// ═════════════════════════════════════════════════════════════════════════
+// generateAgenticPDF — IMPROVED 3-PAGE LAYOUT
+// Cover (P1) · Strategic Brief (P2) · Implementation (P3)
+// ═════════════════════════════════════════════════════════════════════════
 function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
-  var NAVY='#004963', LIME='#ABCF37', TEAL='#168FB1', CHAR='#636466';
-  var RED='#c0392b', GREEN='#27ae60', ORANGE='#e07b00', LIGHT='#f4f6f8';
+  // ── Brand tokens ────────────────────────────────────────────────────
+  var NAVY      = '#004963';
+  var NAVY_DEEP = '#002e3d';
+  var LIME      = '#abcf37';
+  var TEAL      = '#168FB1';
+  var CHAR      = '#636466';
+  var CHAR2     = '#1c2b35';
+  var GRAY_L    = '#E7E6E6';
+  var BG_PAGE   = '#f4f6f8';
+  var RED       = '#c0392b';
+  var GREEN     = '#27ae60';
+  var WHITE     = '#ffffff';
+
+  var LOGO = 'https://resource.pedowitzgroup.com/hubfs/tpg-logo-white.png';
 
   var jspdf = window.jspdf;
   if(!jspdf){ showGateSuccess(); return; }
   var jsPDF = jspdf.jsPDF;
 
-  // Time extraction
-  var beforeTime='', afterTime='', saving='';
-  if(proc.b){ var bm=proc.b.match(/(\d+[\d\s\-\u2013]*)\s*hours?/i); if(bm) beforeTime=bm[1].trim()+' hrs'; }
-  if(proc.a){ var am=proc.a.match(/(\d+[\d\s\-\u2013]*)\s*(hours?|minutes?)/i); if(am) afterTime=am[1].trim()+(am[2].toLowerCase().startsWith('m')?' min':' hrs'); }
-  var sm=proc.a?(proc.a.match(/(\d+)%\s*time/i)||[]):[];
-  if(sm[1]) saving=sm[1]+'% time savings';
-
-  // Step parser
+  // ── Data parsing ────────────────────────────────────────────────────
   function parseStepsLocal(str){
     if(!str) return [];
     return str.split(/\s*\u2192\s*/).map(function(s){
@@ -624,319 +631,421 @@ function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
       if(!s||s.length<4) return null;
       var tm = s.match(/\(([^)]*(?:h(?:our)?s?|m(?:in)?s?)[^)]*)\)/i);
       var nm = s.replace(/\([^)]*\)/g,'').replace(/^\d+\.\s*/,'').replace(/^\d+\s+steps?,\s*[^:]+:\s*/i,'').trim();
-      return nm ? {name:nm, time:tm?tm[1]:''} : null;
+      return nm ? {name:nm, time:tm?tm[1].trim():''} : null;
     }).filter(Boolean).slice(0,6);
   }
+
+  // Numeric time extraction (number only, plus unit)
+  function parseTime(str, isAfter){
+    if(!str) return {num:'', unit:''};
+    var m = str.match(/(\d+[\d\s\-\u2013]*?)\s*(hours?|minutes?|min|hrs?)/i);
+    if(!m) return {num:'', unit:''};
+    var num = m[1].trim().replace(/\s+/g,'');
+    var u = m[2].toLowerCase();
+    var unit = u.indexOf('m')===0 ? (isAfter?'min':'hrs') : 'hrs';
+    return {num:num, unit:unit};
+  }
+
+  var bTime = parseTime(proc.b, false);
+  var aTime = parseTime(proc.a, true);
+  var savingMatch = (proc.a||'').match(/(\d+)%\s*time/i);
+  var savingPct = savingMatch ? savingMatch[1] : '';
 
   var bSteps = parseStepsLocal(proc.b);
   var aSteps = parseStepsLocal(proc.a);
 
+  // Parse metrics like "Response time -98%, Coverage +500%, Manual effort -94%"
+  function parseMetrics(str){
+    if(!str) return [];
+    return str.split(',').map(function(s){
+      s = s.trim();
+      // Try to find a stat like "-98%" or "+500%" or "5x"
+      var statMatch = s.match(/([\+\-]?\d+(?:\.\d+)?\s*(?:%|x))/i);
+      var stat = statMatch ? statMatch[1].replace(/\s+/g,'') : '';
+      var label = stat ? s.replace(statMatch[1],'').trim().replace(/[:\-\u2013]+$/,'').trim() : s;
+      // Capitalize first letter of label
+      if(label) label = label.charAt(0).toUpperCase() + label.slice(1);
+      return {stat:stat, label:label || s};
+    }).filter(function(m){ return m.stat || m.label; }).slice(0,3);
+  }
+  var metrics = parseMetrics(proc.m);
+
+  // Today's date
+  var now = new Date();
+  var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var dateStr = months[now.getMonth()] + ' ' + now.getDate() + ', ' + now.getFullYear();
+  var validThru = 'Valid through Q' + (Math.floor(now.getMonth()/3)+2) + ' ' + now.getFullYear();
+
+  // ── Render helpers ──────────────────────────────────────────────────
   function stepHTML(s, i, isAfter){
     var numBg  = isAfter ? '#e8f5e9' : '#fdecea';
     var numCol = isAfter ? '#2e7d32' : '#b71c1c';
     var tagBg  = isAfter ? '#c8e6c9' : '#fff3cd';
     var tagCol = isAfter ? '#1b5e20' : '#7d5a00';
-    return '<div style="display:flex;gap:9px;align-items:flex-start;margin-bottom:8px">' +
-      '<div style="min-width:18px;height:18px;border-radius:50%;background:'+numBg+';color:'+numCol+';font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center">'+(i+1)+'</div>' +
-      '<div><div style="font-size:12px;font-weight:600;color:#1c2b35;line-height:1.35">'+s.name+'</div>'+
-        (s.time ? '<div style="display:inline-block;font-size:9.5px;font-weight:700;background:'+tagBg+';color:'+tagCol+';border-radius:3px;padding:1px 6px;margin-top:3px">'+s.time+'</div>' : '')+
+    var isAI = isAfter && /\bai\b|agent|auto/i.test(s.name);
+    var aiTag = isAI ? '<span style="display:inline-block;font-size:8.5px;font-weight:800;background:'+LIME+';color:'+NAVY_DEEP+';border-radius:3px;padding:1px 6px;margin-left:6px;letter-spacing:.5px;vertical-align:middle">AI</span>' : '';
+    return '<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:9px">' +
+      '<div style="min-width:18px;height:18px;border-radius:50%;background:'+numBg+';color:'+numCol+';font-size:9.5px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0">'+(i+1)+'</div>' +
+      '<div><div style="font-size:11.5px;font-weight:600;color:'+CHAR2+';line-height:1.4">'+esc(s.name)+aiTag+'</div>'+
+        (s.time ? '<div style="display:inline-block;font-size:9px;font-weight:700;background:'+tagBg+';color:'+tagCol+';border-radius:3px;padding:1px 6px;margin-top:3px;white-space:nowrap">'+esc(s.time)+'</div>' : '')+
       '</div></div>';
   }
 
-  var bHTML = bSteps.map(function(s,i){return stepHTML(s,i,false);}).join('') || '<p style="font-size:11px;color:'+CHAR+';line-height:1.5">'+proc.b+'</p>';
-  var aHTML = aSteps.map(function(s,i){return stepHTML(s,i,true);}).join('') || '<p style="font-size:11px;color:'+CHAR+';line-height:1.5">'+proc.a+'</p>';
-
-  // JSON section renderers
-  function rPara(t, lightText){
-    var col = lightText ? 'rgba(255,255,255,.84)' : CHAR;
-    if(!t) return '<p style="font-size:12px;color:'+(lightText?'rgba(255,255,255,.4)':'#aaa')+';font-style:italic">Data unavailable.</p>';
-    return '<p style="font-size:12.5px;color:'+col+';line-height:1.8;margin:0">'+t+'</p>';
+  function rPara(t){
+    if(!t) return '<p style="font-size:12.5px;color:#aaa;font-style:italic;margin:0;line-height:1.6">Data unavailable.</p>';
+    return '<p style="font-size:12.5px;color:'+CHAR+';line-height:1.65;margin:0">'+esc(t)+'</p>';
+  }
+  function rWhyNow(t){
+    if(!t) return '<p style="font-size:14px;color:rgba(255,255,255,.6);font-style:italic;margin:0">Data unavailable.</p>';
+    return '<p style="font-size:14px;font-weight:500;color:#fff;line-height:1.55;margin:0">'+esc(t)+'</p>';
   }
   function rBullets(arr){
-    if(!arr||!arr.length) return '<p style="font-size:12px;color:#aaa;font-style:italic">Data unavailable.</p>';
-    return arr.map(function(x){
-      return '<div style="display:flex;gap:9px;margin-bottom:9px;align-items:flex-start">' +
-        '<div style="min-width:6px;height:6px;border-radius:50%;background:'+RED+';margin-top:5px"></div>' +
-        '<div style="font-size:12px;color:'+CHAR+';line-height:1.65">'+x+'</div></div>';
-    }).join('');
+    if(!arr||!arr.length) return '<p style="font-size:12px;color:#aaa;font-style:italic;margin:0">Data unavailable.</p>';
+    return '<div style="display:flex;flex-direction:column;gap:8px">' +
+      arr.slice(0,3).map(function(x){
+        return '<div style="display:flex;gap:9px;align-items:flex-start">' +
+          '<div style="min-width:6px;height:6px;border-radius:50%;background:'+RED+';margin-top:6px;flex-shrink:0"></div>' +
+          '<div style="font-size:11.5px;color:'+CHAR+';line-height:1.55">'+esc(x)+'</div></div>';
+      }).join('') + '</div>';
   }
   function rPlatforms(pp){
     if(!pp||!pp.length) return '<p style="font-size:12px;color:#aaa;font-style:italic">Data unavailable.</p>';
-    return pp.map(function(p,i){
-      return '<div style="background:#fff;border:1px solid #dde4eb;border-radius:8px;padding:11px 14px;margin-bottom:8px">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
-          '<span style="font-size:13px;font-weight:700;color:'+NAVY+'">'+(i+1)+'. '+p.name+'</span>' +
-          '<span style="font-size:10.5px;color:'+TEAL+';font-weight:600;background:rgba(22,143,177,.1);padding:2px 8px;border-radius:10px">'+p.pricing+'</span>' +
+    return pp.slice(0,3).map(function(p,i){
+      return '<div style="background:#fff;border:1px solid '+GRAY_L+';border-radius:8px;padding:12px 13px;display:flex;flex-direction:column;gap:6px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center">' +
+          '<div style="font-size:12.5px;font-weight:800;color:'+NAVY+';letter-spacing:-.2px">'+esc(p.name||'')+'</div>' +
+          '<div style="width:18px;height:18px;border-radius:50%;background:'+NAVY+';color:#fff;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center">'+(i+1)+'</div>' +
         '</div>' +
-        '<div style="font-size:11.5px;color:'+CHAR+';line-height:1.5">'+p.desc+'</div>' +
+        '<div style="font-size:10.5px;color:'+CHAR+';line-height:1.5;min-height:32px">'+esc(p.desc||'')+'</div>' +
+        '<div style="font-size:9.5px;font-weight:700;color:'+TEAL+';background:rgba(22,143,177,.10);padding:3px 8px;border-radius:10px;width:fit-content;margin-top:auto">'+esc(p.pricing||'')+'</div>' +
       '</div>';
     }).join('');
   }
   function rPlan(plan){
     if(!plan) return '<p style="font-size:12px;color:#aaa;font-style:italic">Data unavailable.</p>';
     var weeks = [
-      {l:'Week 1',   items:plan.week1||[], c:TEAL,       bg:'#e3f4f9'},
-      {l:'Week 2',   items:plan.week2||[], c:'#1565c0',  bg:'#e8eef8'},
-      {l:'Weeks 3–4',items:plan.week34||[],c:'#2e7d32',  bg:'#e8f5e9'}
+      {l:'Week 1',   sub:'Foundation',  items:plan.week1||[],  c:TEAL,      n:'1'},
+      {l:'Week 2',   sub:'Train & test',items:plan.week2||[],  c:'#1565c0', n:'2'},
+      {l:'Weeks 3\u20134', sub:'Roll out',items:plan.week34||[],c:'#2e7d32', n:'3'}
     ];
-    return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">' +
+    return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">' +
       weeks.map(function(w){
-        return '<div style="background:'+w.bg+';border-radius:8px;padding:12px 13px;border-top:3px solid '+w.c+'">' +
-          '<div style="font-size:9.5px;font-weight:800;color:'+w.c+';text-transform:uppercase;letter-spacing:1.2px;margin-bottom:9px">'+w.l+'</div>' +
-          w.items.map(function(x){
-            return '<div style="display:flex;gap:7px;margin-bottom:7px;align-items:flex-start">' +
-              '<div style="min-width:5px;height:5px;border-radius:50%;background:'+w.c+';margin-top:5px"></div>' +
-              '<div style="font-size:11px;color:#1c2b35;line-height:1.5">'+x+'</div></div>';
+        return '<div style="background:#fff;border:1px solid '+GRAY_L+';border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px">' +
+          '<div style="display:flex;align-items:center;gap:9px;padding-bottom:10px;border-bottom:1px solid '+GRAY_L+'">' +
+            '<div style="width:24px;height:24px;border-radius:6px;background:'+w.c+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0">'+w.n+'</div>' +
+            '<div style="display:flex;flex-direction:column;line-height:1.1">' +
+              '<div style="font-size:10.5px;font-weight:800;color:'+NAVY+';text-transform:uppercase;letter-spacing:1.3px;white-space:nowrap">'+w.l+'</div>' +
+              '<div style="font-size:9px;color:'+CHAR+';font-weight:600;margin-top:3px;white-space:nowrap">'+w.sub+'</div>' +
+            '</div>' +
+          '</div>' +
+          w.items.slice(0,4).map(function(x){
+            return '<div style="display:flex;gap:9px;align-items:flex-start">' +
+              '<div style="min-width:6px;height:6px;border-radius:50%;background:'+w.c+';margin-top:6px;flex-shrink:0"></div>' +
+              '<div style="font-size:11px;color:'+CHAR2+';line-height:1.5;font-weight:500">'+esc(x)+'</div></div>';
           }).join('') +
         '</div>';
       }).join('')+'</div>';
   }
 
-  // Shared CSS — no Google Fonts needed (Arial renders fine in html2canvas)
+  // Header band reused on interior pages
+  function pageHeader(pageTitle, pageNum){
+    return '<div style="background:'+NAVY+';color:#fff;padding:18px 40px;display:flex;align-items:center;gap:18px;border-bottom:3px solid '+LIME+'">' +
+      '<img src="'+LOGO+'" style="height:30px;width:auto;display:block;opacity:.95" crossorigin="anonymous" alt="TPG">' +
+      '<div style="flex:1">' +
+        '<div style="font-size:8.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.42);margin-bottom:2px">Agentic AI Implementation Report \u00b7 The Pedowitz Group</div>' +
+        '<div style="font-size:14px;font-weight:800;color:#fff;line-height:1.2;letter-spacing:-.2px">'+pageTitle+'</div>' +
+      '</div>' +
+      '<div style="font-size:9.5px;color:rgba(255,255,255,.5);letter-spacing:.8px;text-align:right;white-space:nowrap">Page <b style="color:'+LIME+';font-weight:700">'+pageNum+'</b> / 03</div>' +
+    '</div>';
+  }
+  function pageFooter(pageNum){
+    return '<div style="background:'+NAVY+';padding:9px 40px;display:flex;justify-content:space-between;align-items:center">' +
+      '<span style="font-size:8.5px;color:rgba(255,255,255,.4);letter-spacing:.6px">The Pedowitz Group \u00b7 pedowitzgroup.com \u00b7 Confidential</span>' +
+      '<span style="font-size:9px;font-weight:800;color:'+LIME+';letter-spacing:1.2px">'+pageNum+' / 03</span>' +
+    '</div>';
+  }
+
+  // ── Shared CSS reset for the offscreen render ───────────────────────
   var CSS = '<style>' +
     '*{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
-    'html,body,div,p,span{font-family:Arial,Helvetica,sans-serif}' +
-    '.page{width:794px;background:#fff;position:relative;overflow:hidden}' +
-    // Page header
-    '.phdr{background:'+NAVY+';padding:15px 36px;border-bottom:3px solid '+LIME+';display:flex;justify-content:space-between;align-items:center}' +
-    '.phdr-text{flex:1}' +
-    '.phdr-eye{font-size:8.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:2px}' +
-    '.phdr-ttl{font-size:14px;font-weight:800;color:#fff;line-height:1.2}' +
-    '.phdr-sub{font-size:9.5px;color:rgba(255,255,255,.4);margin-top:2px;font-style:italic}' +
-    // Page footer
-    '.pftr{background:'+NAVY+';padding:7px 36px;display:flex;justify-content:space-between;align-items:center}' +
-    // Body
-    '.pbdy{padding:22px 32px 18px}' +
-    // Cards
-    '.card{background:'+LIGHT+';border:1px solid #d8dee5;border-radius:8px;padding:15px}' +
-    '.card-navy{background:'+NAVY+';border-radius:8px;padding:15px 18px}' +
-    // Labels
-    '.lbl{font-size:9px;font-weight:800;letter-spacing:1.8px;text-transform:uppercase;margin-bottom:9px}' +
+    'html,body,div,p,span,h1,h2,small,b,em{font-family:Arial,Helvetica,sans-serif}' +
+    '.page{width:794px;height:1123px;background:#fff;position:relative;overflow:hidden;display:flex;flex-direction:column}' +
   '</style>';
 
-  var LOGO = 'https://resource.pedowitzgroup.com/hubfs/tpg-logo-white.png';
-
-  var wrap = document.createElement('div');
-  wrap.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:#fff;font-family:Arial,sans-serif;';
-  document.body.appendChild(wrap);
-  var pages = [];
-
-  // ═══════════════════════════════════════════════════════
-  // PAGE 1 — FULL-BLEED COVER
-  // ═══════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════
+  // PAGE 1 — COVER
+  // ═══════════════════════════════════════════════════════════════════
+  var catSubStr = esc(cat) + (sub ? ' \u203a ' + esc(sub) : '');
   var coverHTML = CSS +
-    '<div class="page" style="min-height:1123px;background:'+NAVY+';display:flex;flex-direction:column">' +
+    '<div class="page" style="background:'+NAVY_DEEP+';color:#fff">' +
       // Top lime stripe
-      '<div style="background:'+LIME+';height:6px;flex-shrink:0"></div>' +
+      '<div style="height:6px;background:'+LIME+';flex-shrink:0"></div>' +
 
-      // Nav bar — logo + URL
-      '<div style="padding:20px 44px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,.08)">' +
-        '<img src="'+LOGO+'" style="height:32px;width:auto" crossorigin="anonymous" alt="The Pedowitz Group">' +
-        '<div style="font-size:9px;color:rgba(255,255,255,.28);letter-spacing:.8px">pedowitzgroup.com</div>' +
+      // Nav bar
+      '<div style="padding:22px 48px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,.08);position:relative;z-index:2">' +
+        '<img src="'+LOGO+'" style="height:48px;width:auto;display:block" crossorigin="anonymous" alt="The Pedowitz Group">' +
+        '<div style="text-align:right">' +
+          '<div style="font-size:10.5px;color:#fff;font-weight:700;letter-spacing:.5px">pedowitzgroup.com</div>' +
+          '<div style="font-size:9px;color:rgba(255,255,255,.32);margin-top:2px;letter-spacing:.5px">'+dateStr+' \u00b7 Confidential</div>' +
+        '</div>' +
       '</div>' +
 
-      // Main content
-      '<div style="flex:1;padding:40px 44px 32px;display:flex;flex-direction:column">' +
+      // Lime corner decoration
+      '<div style="position:absolute;top:78px;right:0;width:170px;height:170px;background:linear-gradient(135deg,rgba(171,207,55,.10),rgba(171,207,55,0));border-top:1px solid rgba(171,207,55,.18);border-left:1px solid rgba(171,207,55,.18);border-top-left-radius:14px;pointer-events:none"></div>' +
 
-        // Category tag
-        '<div style="display:inline-block;background:rgba(171,207,55,.15);border:1px solid rgba(171,207,55,.35);border-radius:100px;padding:5px 14px;margin-bottom:20px;width:fit-content">' +
-          '<span style="font-size:9.5px;font-weight:700;color:'+LIME+';letter-spacing:1.5px;text-transform:uppercase">'+cat+(sub?' &rsaquo; '+sub:'')+'</span>' +
+      // Body
+      '<div style="flex:1;padding:54px 48px 24px;display:flex;flex-direction:column;position:relative;z-index:1">' +
+
+        // Category pill
+        '<div style="display:inline-flex;align-items:center;gap:8px;background:rgba(171,207,55,.12);border:1px solid rgba(171,207,55,.36);border-radius:100px;padding:6px 14px;width:fit-content;margin-bottom:24px;white-space:nowrap">' +
+          '<span style="width:6px;height:6px;border-radius:50%;background:'+LIME+';display:inline-block"></span>' +
+          '<span style="font-size:10px;font-weight:700;color:'+LIME+';letter-spacing:1.5px;text-transform:uppercase">'+catSubStr+'</span>' +
         '</div>' +
 
-        // Process title
-        '<div style="font-size:36px;font-weight:900;color:#fff;line-height:1.1;margin-bottom:14px;max-width:580px;letter-spacing:-.5px">'+proc.p+'</div>' +
+        // Title
+        '<div style="font-size:54px;font-weight:900;color:#fff;line-height:1.04;letter-spacing:-1.6px;margin:0 0 22px;max-width:640px">'+esc(proc.p)+'</div>' +
 
         // Lime rule
-        '<div style="width:52px;height:4px;background:'+LIME+';border-radius:2px;margin-bottom:20px"></div>' +
+        '<div style="width:60px;height:4px;background:'+LIME+';border-radius:2px;margin-bottom:24px"></div>' +
 
-        // AEO answer
-        '<div style="font-size:11px;font-weight:600;color:rgba(255,255,255,.32);margin-bottom:9px;text-transform:uppercase;letter-spacing:1px">What This AI Process Does</div>' +
-        '<div style="font-size:15px;font-weight:600;color:rgba(255,255,255,.9);line-height:1.6;max-width:560px;margin-bottom:32px;padding-left:16px;border-left:4px solid '+LIME+'">'+proc.v+'</div>' +
+        // AEO label + answer
+        '<div style="font-size:10px;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:1.8px;margin-bottom:10px">What this AI process does</div>' +
+        '<div style="font-size:16px;font-weight:500;color:rgba(255,255,255,.92);line-height:1.55;max-width:600px;padding-left:18px;border-left:3px solid rgba(171,207,55,.5);margin-bottom:48px">'+esc(proc.v)+'</div>' +
 
-        // Time comparison blocks
-        (beforeTime&&afterTime ?
-          '<div style="display:flex;align-items:center;gap:14px;margin-bottom:32px">' +
-            '<div style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:14px 20px;text-align:center">' +
-              '<div style="font-size:22px;font-weight:900;color:rgba(255,100,100,.9);line-height:1;letter-spacing:-.5px">'+beforeTime+'</div>' +
-              '<div style="font-size:9px;color:rgba(255,255,255,.35);margin-top:5px;text-transform:uppercase;letter-spacing:.8px">manually today</div>' +
-            '</div>' +
-            '<div style="font-size:22px;color:rgba(255,255,255,.15)">\u2192</div>' +
-            '<div style="background:rgba(171,207,55,.12);border:1px solid rgba(171,207,55,.3);border-radius:10px;padding:14px 20px;text-align:center">' +
-              '<div style="font-size:22px;font-weight:900;color:'+LIME+';line-height:1;letter-spacing:-.5px">'+afterTime+'</div>' +
-              '<div style="font-size:9px;color:rgba(255,255,255,.35);margin-top:5px;text-transform:uppercase;letter-spacing:.8px">with AI agents</div>' +
-            '</div>' +
-            (saving?'<div style="background:'+LIME+';color:'+NAVY+';border-radius:8px;padding:10px 16px;font-weight:900;font-size:13px;letter-spacing:.3px">'+saving+'</div>':'') +
+        // Hero stat row
+        ((savingPct || (bTime.num && aTime.num)) ?
+          '<div style="display:flex;align-items:stretch;gap:24px;margin-bottom:44px">' +
+            (savingPct ?
+              '<div style="flex:1;background:rgba(171,207,55,.08);border:1px solid rgba(171,207,55,.28);border-radius:14px;padding:22px 26px;display:flex;align-items:center;gap:22px">' +
+                '<div style="font-size:84px;font-weight:900;color:'+LIME+';line-height:.95;letter-spacing:-3.5px">'+savingPct+'%</div>' +
+                '<div>' +
+                  '<div style="font-size:14px;font-weight:700;color:#fff;line-height:1.2;margin-bottom:3px">Time savings</div>' +
+                  '<div style="font-size:10px;font-weight:600;color:rgba(255,255,255,.45);letter-spacing:1.2px;text-transform:uppercase">vs. manual today</div>' +
+                '</div>' +
+              '</div>' : '') +
+            ((bTime.num && aTime.num) ?
+              '<div style="display:flex;flex-direction:column;gap:8px;width:200px">' +
+                '<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);border-radius:10px;padding:10px 14px">' +
+                  '<div style="font-size:9px;font-weight:700;color:rgba(255,255,255,.45);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:4px">Manually today</div>' +
+                  '<div style="display:flex;align-items:baseline;gap:6px"><span style="font-size:22px;font-weight:800;color:#ff8b8b;line-height:1;letter-spacing:-.5px">'+esc(bTime.num)+'</span><span style="font-size:10px;color:rgba(255,255,255,.55);font-weight:600">'+esc(bTime.unit)+' / event</span></div>' +
+                '</div>' +
+                '<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);border-radius:10px;padding:10px 14px">' +
+                  '<div style="font-size:9px;font-weight:700;color:rgba(255,255,255,.45);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:4px">With AI agents</div>' +
+                  '<div style="display:flex;align-items:baseline;gap:6px"><span style="font-size:22px;font-weight:800;color:'+LIME+';line-height:1;letter-spacing:-.5px">'+esc(aTime.num)+'</span><span style="font-size:10px;color:rgba(255,255,255,.55);font-weight:600">'+esc(aTime.unit)+' / event</span></div>' +
+                '</div>' +
+              '</div>' : '') +
           '</div>' : '') +
 
-        // Prepared for
-        '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
-          '<div style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:11px 16px">' +
-            '<div style="font-size:8.5px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Prepared for</div>' +
-            '<div style="font-size:14px;font-weight:700;color:#fff">'+name+'</div>' +
-            (email?'<div style="font-size:10.5px;color:rgba(255,255,255,.38);margin-top:2px">'+email+'</div>':'') +
+        // Prepared-for footer
+        '<div style="margin-top:auto;padding-top:32px;border-top:1px solid rgba(255,255,255,.10);display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px">' +
+          '<div style="display:flex;flex-direction:column;gap:5px">' +
+            '<span style="font-size:9px;font-weight:800;color:rgba(255,255,255,.4);letter-spacing:1.6px;text-transform:uppercase">Prepared for</span>' +
+            '<span style="font-size:14px;font-weight:700;color:#fff;line-height:1.2">'+esc(name||'\u2014')+'</span>' +
+            (email?'<span style="font-size:11px;color:rgba(255,255,255,.55)">'+esc(email)+'</span>':'') +
           '</div>' +
-          (company?'<div style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:11px 16px"><div style="font-size:8.5px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Organization</div><div style="font-size:14px;font-weight:700;color:#fff">'+company+'</div></div>':'') +
+          '<div style="display:flex;flex-direction:column;gap:5px">' +
+            '<span style="font-size:9px;font-weight:800;color:rgba(255,255,255,.4);letter-spacing:1.6px;text-transform:uppercase">Organization</span>' +
+            '<span style="font-size:14px;font-weight:700;color:#fff;line-height:1.2">'+esc(company||'\u2014')+'</span>' +
+          '</div>' +
+          '<div style="display:flex;flex-direction:column;gap:5px">' +
+            '<span style="font-size:9px;font-weight:800;color:rgba(255,255,255,.4);letter-spacing:1.6px;text-transform:uppercase">Report date</span>' +
+            '<span style="font-size:14px;font-weight:700;color:#fff;line-height:1.2">'+dateStr+'</span>' +
+            '<span style="font-size:11px;color:rgba(255,255,255,.55)">'+validThru+'</span>' +
+          '</div>' +
         '</div>' +
 
       '</div>' +
 
-      // Spacer
-      '<div style="flex:1"></div>' +
-
-      // Bottom bar
-      '<div style="background:'+LIME+';padding:10px 44px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0">' +
-        '<span style="font-size:8.5px;font-weight:700;color:'+NAVY+';letter-spacing:.8px;text-transform:uppercase">Confidential &middot; Agentic AI Implementation Report</span>' +
-        '<span style="font-size:8.5px;font-weight:700;color:'+NAVY+'">The Pedowitz Group &middot; pedowitzgroup.com</span>' +
+      // Bottom lime strip
+      '<div style="background:'+LIME+';padding:11px 48px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0">' +
+        '<span style="font-size:9px;font-weight:800;color:'+NAVY_DEEP+';letter-spacing:1.2px;text-transform:uppercase">Confidential \u00b7 Agentic AI implementation report</span>' +
+        '<span style="font-size:9px;font-weight:800;color:'+NAVY_DEEP+';letter-spacing:.5px">The Pedowitz Group \u00b7 pedowitzgroup.com</span>' +
       '</div>' +
     '</div>';
 
-  var d1 = document.createElement('div'); d1.innerHTML = coverHTML;
-  pages.push(d1.querySelector('.page'));
+  // ═══════════════════════════════════════════════════════════════════
+  // PAGE 2 — STRATEGIC BRIEF
+  // ═══════════════════════════════════════════════════════════════════
+  var bHTML = bSteps.length ? bSteps.map(function(s,i){return stepHTML(s,i,false);}).join('') : '<p style="font-size:11.5px;color:'+CHAR+';line-height:1.55">'+esc(proc.b||'')+'</p>';
+  var aHTML = aSteps.length ? aSteps.map(function(s,i){return stepHTML(s,i,true);}).join('')  : '<p style="font-size:11.5px;color:'+CHAR+';line-height:1.55">'+esc(proc.a||'')+'</p>';
 
-  // ═══════════════════════════════════════════════════════
-  // PAGE 2 — WORKFLOW + STRATEGIC BRIEF
-  // ═══════════════════════════════════════════════════════
-  var page2HTML = CSS +
-    '<div class="page" style="min-height:1123px">' +
-      '<div class="phdr">' +
-        '<div class="phdr-text">' +
-          '<div class="phdr-eye">Agentic AI Implementation Report &middot; The Pedowitz Group</div>' +
-          '<div class="phdr-ttl">Workflow Analysis &amp; Strategic Brief</div>' +
-          '<div class="phdr-sub">'+proc.p+'</div>' +
+  // Metrics strip (fall back to gap-fill if proc.m empty)
+  var metricsHTML = '';
+  if(metrics.length){
+    metricsHTML =
+      '<div style="margin-top:auto;padding-top:18px">' +
+        '<div style="font-size:9px;font-weight:800;color:'+NAVY+';letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">Success metrics to track</div>' +
+        '<div style="display:grid;grid-template-columns:repeat('+metrics.length+',1fr);gap:10px">' +
+          metrics.map(function(m){
+            return '<div style="background:'+BG_PAGE+';border:1px solid '+GRAY_L+';border-radius:8px;padding:12px 14px">' +
+              (m.stat?'<div style="font-size:22px;font-weight:900;color:'+NAVY+';letter-spacing:-.6px;line-height:1">'+esc(m.stat)+'</div>':'') +
+              '<div style="font-size:9.5px;color:'+CHAR+';font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-top:6px">'+esc(m.label)+'</div>' +
+            '</div>';
+          }).join('') +
         '</div>' +
-        '<img src="'+LOGO+'" style="height:24px;width:auto;opacity:.6;margin-left:20px" crossorigin="anonymous" alt="TPG">' +
-      '</div>' +
-      '<div class="pbdy">' +
+      '</div>';
+  }
 
-        // Before/After
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">' +
-          '<div class="card" style="border-left:4px solid '+RED+'">' +
-            '<div style="font-size:10px;font-weight:800;color:'+RED+';text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">\u2717 Manual Process Today</div>' +
+  var page2HTML = CSS +
+    '<div class="page">' +
+      pageHeader('Strategic brief \u2014 '+esc(proc.p), '02') +
+      '<div style="flex:1;padding:28px 40px 22px;display:flex;flex-direction:column">' +
+
+        // Section tag
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
+          '<span style="background:'+LIME+';color:'+NAVY_DEEP+';padding:3px 8px;border-radius:3px;font-size:10px;font-weight:800;letter-spacing:1.2px">01</span>' +
+          '<span style="font-size:10px;font-weight:700;color:'+CHAR+';letter-spacing:2.5px;text-transform:uppercase">Strategic Brief</span>' +
+        '</div>' +
+        '<h2 style="font-size:24px;font-weight:800;color:'+NAVY+';letter-spacing:-.6px;line-height:1.2;margin:0 0 22px;max-width:620px">Why this matters now, and how the agent works</h2>' +
+
+        // Why-now navy callout
+        '<div style="background:'+NAVY+';color:#fff;border-radius:10px;padding:20px 22px 20px 26px;position:relative;overflow:hidden;margin-bottom:14px">' +
+          '<div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:'+LIME+'"></div>' +
+          '<div style="font-size:9px;font-weight:800;color:'+LIME+';letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">Why this matters now</div>' +
+          rWhyNow(brief && brief.why_now) +
+        '</div>' +
+
+        // Agent approach card
+        '<div style="background:#fff;border:1px solid '+GRAY_L+';border-top:3px solid '+TEAL+';border-radius:10px;padding:18px 20px;margin-bottom:18px">' +
+          '<div style="font-size:9px;font-weight:800;color:'+TEAL+';letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">The AI agent approach</div>' +
+          rPara(brief && brief.agent_approach) +
+        '</div>' +
+
+        // Divider label
+        '<div style="display:flex;align-items:center;gap:12px;margin:6px 0 14px">' +
+          '<div style="flex:1;height:1px;background:'+GRAY_L+'"></div>' +
+          '<div style="font-size:9.5px;font-weight:800;color:'+CHAR+';letter-spacing:2.5px;text-transform:uppercase">Workflow transformation</div>' +
+          '<div style="flex:1;height:1px;background:'+GRAY_L+'"></div>' +
+        '</div>' +
+
+        // Before/after grid
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">' +
+          // Before
+          '<div style="background:'+BG_PAGE+';border:1px solid '+GRAY_L+';border-left:4px solid '+RED+';border-radius:10px;padding:16px 18px">' +
+            '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px">' +
+              '<div style="font-size:9.5px;font-weight:800;color:'+RED+';letter-spacing:1.6px;text-transform:uppercase">\u2717 Manual today</div>' +
+              (bTime.num?'<div style="font-size:15px;font-weight:800;color:'+CHAR2+';letter-spacing:-.3px;white-space:nowrap">'+esc(bTime.num)+'<small style="font-size:10px;font-weight:600;color:'+CHAR+';letter-spacing:.3px;margin-left:1px"> '+esc(bTime.unit)+'</small></div>':'') +
+            '</div>' +
             bHTML +
           '</div>' +
-          '<div class="card" style="border-left:4px solid '+GREEN+'">' +
-            '<div style="font-size:10px;font-weight:800;color:'+GREEN+';text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">\u2713 With AI Agents</div>' +
+          // After
+          '<div style="background:'+BG_PAGE+';border:1px solid '+GRAY_L+';border-left:4px solid '+GREEN+';border-radius:10px;padding:16px 18px">' +
+            '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px">' +
+              '<div style="font-size:9.5px;font-weight:800;color:'+GREEN+';letter-spacing:1.6px;text-transform:uppercase">\u2713 With AI agents</div>' +
+              (aTime.num?'<div style="font-size:15px;font-weight:800;color:'+CHAR2+';letter-spacing:-.3px;white-space:nowrap">'+esc(aTime.num)+'<small style="font-size:10px;font-weight:600;color:'+CHAR+';letter-spacing:.3px;margin-left:1px"> '+esc(aTime.unit)+'</small></div>':'') +
+            '</div>' +
             aHTML +
           '</div>' +
         '</div>' +
 
-        // Why Now — navy card
-        '<div class="card-navy" style="margin-bottom:12px">' +
-          '<div class="lbl" style="color:'+LIME+'">Why This Matters Now</div>' +
-          rPara(brief&&brief.why_now, true) +
-        '</div>' +
-
-        // AI Approach
-        '<div class="card" style="margin-bottom:12px">' +
-          '<div class="lbl" style="color:'+TEAL+'">The AI Agent Approach</div>' +
-          rPara(brief&&brief.agent_approach, false) +
-        '</div>' +
-
-        // Platforms
-        '<div class="card">' +
-          '<div class="lbl" style="color:'+TEAL+'">Top 3 Platforms</div>' +
-          rPlatforms(brief&&brief.platforms) +
-        '</div>' +
+        // Success metrics strip (uses margin-top:auto to push to bottom)
+        metricsHTML +
 
       '</div>' +
-      '<div class="pftr">' +
-        '<span style="font-size:8.5px;color:rgba(255,255,255,.35)">The Pedowitz Group &middot; pedowitzgroup.com</span>' +
-        '<span style="font-size:8.5px;color:'+LIME+';font-weight:600">'+email+'</span>' +
-      '</div>' +
+      pageFooter('02') +
     '</div>';
 
-  var d2 = document.createElement('div'); d2.innerHTML = page2HTML;
-  pages.push(d2.querySelector('.page'));
-
-  // ═══════════════════════════════════════════════════════
-  // PAGE 3 — PLAN + ROI + PITFALLS + CTA
-  // ═══════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════
+  // PAGE 3 — IMPLEMENTATION
+  // ═══════════════════════════════════════════════════════════════════
   var page3HTML = CSS +
-    '<div class="page" style="min-height:1123px">' +
-      '<div class="phdr">' +
-        '<div class="phdr-text">' +
-          '<div class="phdr-eye">Agentic AI Implementation Report &middot; The Pedowitz Group</div>' +
-          '<div class="phdr-ttl">30-Day Implementation Plan &amp; Business Case</div>' +
-          '<div class="phdr-sub">'+proc.p+'</div>' +
-        '</div>' +
-        '<img src="'+LOGO+'" style="height:24px;width:auto;opacity:.6;margin-left:20px" crossorigin="anonymous" alt="TPG">' +
-      '</div>' +
-      '<div class="pbdy">' +
+    '<div class="page">' +
+      pageHeader('Implementation \u2014 30-day path to live', '03') +
+      '<div style="flex:1;padding:28px 40px 22px;display:flex;flex-direction:column">' +
 
-        // 30-day plan
-        '<div style="margin-bottom:16px">' +
-          '<div class="lbl" style="color:'+NAVY+'">30-Day Implementation Roadmap</div>' +
-          rPlan(brief&&brief.plan) +
+        // Section tag
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
+          '<span style="background:'+LIME+';color:'+NAVY_DEEP+';padding:3px 8px;border-radius:3px;font-size:10px;font-weight:800;letter-spacing:1.2px">02</span>' +
+          '<span style="font-size:10px;font-weight:700;color:'+CHAR+';letter-spacing:2.5px;text-transform:uppercase">Implementation</span>' +
+        '</div>' +
+        '<h2 style="font-size:24px;font-weight:800;color:'+NAVY+';letter-spacing:-.6px;line-height:1.2;margin:0 0 22px;max-width:620px">Your 30-day path to a live agent</h2>' +
+
+        // Platforms
+        '<div style="font-size:9px;font-weight:800;color:'+NAVY+';letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">Top 3 platforms to evaluate</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:18px">' +
+          rPlatforms(brief && brief.platforms) +
+        '</div>' +
+
+        // Plan
+        '<div style="font-size:9px;font-weight:800;color:'+NAVY+';letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">30-day roadmap</div>' +
+        '<div style="margin-bottom:18px">' +
+          rPlan(brief && brief.plan) +
         '</div>' +
 
         // ROI + Pitfalls
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">' +
-          '<div class="card" style="border-left:4px solid '+LIME+'">' +
-            '<div class="lbl" style="color:'+NAVY+'">Expected Business ROI</div>' +
-            rPara(brief&&brief.roi, false) +
+          '<div style="background:#fff;border:1px solid '+GRAY_L+';border-top:3px solid '+LIME+';border-radius:10px;padding:18px 20px">' +
+            '<div style="font-size:9px;font-weight:800;color:'+LIME+';letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;filter:brightness(.7)"><span style="color:#6a9300">Expected business ROI</span></div>' +
+            rPara(brief && brief.roi) +
           '</div>' +
-          '<div class="card" style="border-left:4px solid '+RED+'">' +
-            '<div class="lbl" style="color:'+RED+'">Common Pitfalls to Avoid</div>' +
-            rBullets(brief&&brief.pitfalls) +
+          '<div style="background:#fff;border:1px solid '+GRAY_L+';border-top:3px solid '+RED+';border-radius:10px;padding:18px 20px">' +
+            '<div style="font-size:9px;font-weight:800;color:'+RED+';letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">Common pitfalls to avoid</div>' +
+            rBullets(brief && brief.pitfalls) +
           '</div>' +
         '</div>' +
 
-        // CTA block
-        '<div style="background:'+NAVY+';border-radius:10px;padding:24px 28px;display:flex;align-items:center;gap:28px">' +
-          '<div style="flex:1">' +
-            '<div style="font-size:16px;font-weight:800;color:#fff;margin-bottom:7px;line-height:1.25">Ready to implement this with TPG?</div>' +
-            '<div style="font-size:12px;color:rgba(255,255,255,.6);line-height:1.65;margin-bottom:12px">Our AI practice has deployed agentic processes like this for 1,500+ B2B clients since 2007. We can have you live in 30 days.</div>' +
-            '<div style="font-size:13px;font-weight:700;color:'+LIME+'">pedowitzgroup.com/contact</div>' +
+        // CTA pinned to bottom
+        '<div style="margin-top:auto;background:'+NAVY+';color:#fff;border-radius:12px;padding:22px 26px;display:flex;align-items:center;gap:22px;position:relative;overflow:hidden">' +
+          '<div style="position:absolute;right:-20px;top:-20px;width:160px;height:160px;border-radius:50%;background:radial-gradient(circle,rgba(171,207,55,.12),transparent 70%)"></div>' +
+          '<div style="flex:1;position:relative;z-index:1">' +
+            '<div style="font-size:9.5px;font-weight:800;color:'+LIME+';letter-spacing:1.8px;text-transform:uppercase;margin-bottom:8px">Next step</div>' +
+            '<div style="font-size:18px;font-weight:800;color:#fff;line-height:1.2;margin-bottom:6px;letter-spacing:-.3px">Ready to implement this with TPG?</div>' +
+            '<div style="font-size:11.5px;color:rgba(255,255,255,.7);line-height:1.55;max-width:380px">Our AI practice has deployed agentic processes like this for 1,500+ B2B clients since 2007. We can have you live in 30 days, on your existing stack.</div>' +
+            '<div style="font-size:12px;font-weight:700;color:'+LIME+';margin-top:10px;display:inline-block">pedowitzgroup.com/contact</div>' +
           '</div>' +
-          // Right accent
-          '<div style="background:'+LIME+';border-radius:10px;padding:16px 20px;text-align:center;flex-shrink:0">' +
-            '<img src="'+LOGO+'" style="height:20px;width:auto;margin-bottom:6px;filter:invert(1) sepia(1) saturate(10) hue-rotate(180deg)" crossorigin="anonymous" alt="TPG">' +
-            '<div style="font-size:8.5px;font-weight:800;color:'+NAVY+';text-transform:uppercase;letter-spacing:1px;margin-top:4px">Since 2007</div>' +
-            '<div style="font-size:8px;color:rgba(0,73,99,.6);margin-top:2px">1,500+ Clients</div>' +
+          '<div style="background:'+LIME+';color:'+NAVY_DEEP+';border-radius:10px;padding:14px 18px;text-align:center;flex-shrink:0;position:relative;z-index:1;min-width:110px">' +
+            '<div style="font-size:22px;font-weight:900;line-height:1;letter-spacing:-.5px">1,500+</div>' +
+            '<div style="font-size:8px;font-weight:800;color:'+NAVY_DEEP+';letter-spacing:1.4px;text-transform:uppercase;margin-top:5px">Clients</div>' +
+            '<div style="height:1px;background:rgba(0,73,99,.2);margin:8px 0"></div>' +
+            '<div style="font-size:9.5px;font-weight:800;color:'+NAVY_DEEP+';letter-spacing:.5px">Since 2007</div>' +
           '</div>' +
         '</div>' +
 
       '</div>' +
-      '<div class="pftr">' +
-        '<span style="font-size:8.5px;color:rgba(255,255,255,.35)">The Pedowitz Group &middot; pedowitzgroup.com</span>' +
-        '<span style="font-size:8.5px;color:'+LIME+';font-weight:600">'+email+'</span>' +
-      '</div>' +
+      pageFooter('03') +
     '</div>';
 
-  var d3 = document.createElement('div'); d3.innerHTML = page3HTML;
-  pages.push(d3.querySelector('.page'));
+  // ── Render ──────────────────────────────────────────────────────────
+  var pages = [coverHTML, page2HTML, page3HTML];
 
-  // ═══════════════════════════════════════════════════════
-  // RENDER TO PDF
-  // ═══════════════════════════════════════════════════════
+  var wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:#fff;';
+  document.body.appendChild(wrap);
+
   var pdf = new jsPDF('p','mm','a4');
   var PW = pdf.internal.pageSize.getWidth();
   var PH = pdf.internal.pageSize.getHeight();
 
   function renderPage(idx){
     if(idx >= pages.length){
-      document.body.removeChild(wrap);
+      try { document.body.removeChild(wrap); } catch(e){}
       pdf.save('TPG-Agentic-AI-Report.pdf');
       showGateSuccess();
       return;
     }
     wrap.innerHTML = '';
-    wrap.appendChild(pages[idx]);
+    var frag = document.createElement('div');
+    frag.innerHTML = pages[idx];
+    var pageEl = frag.querySelector('.page');
+    wrap.appendChild(pageEl);
     void wrap.offsetHeight;
-    // Small delay to let images load
+
     setTimeout(function(){
-      window.html2canvas(pages[idx], {
-        scale:2.5, useCORS:true, allowTaint:true,
-        backgroundColor:'#ffffff', width:794, windowWidth:794,
-        height:pages[idx].scrollHeight||1123,
-        logging:false,
-        onclone:function(doc){
-          // Ensure images have time to load in cloned doc
+      window.html2canvas(pageEl, {
+        scale: 2.5,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        width: 794,
+        height: 1123,
+        windowWidth: 794,
+        logging: false,
+        onclone: function(doc){
           var imgs = doc.querySelectorAll('img');
           imgs.forEach(function(img){ img.crossOrigin='anonymous'; });
         }
       }).then(function(canvas){
-        var imgData = canvas.toDataURL('image/jpeg', 0.95);
+        var imgData = canvas.toDataURL('image/jpeg', 0.94);
         if(idx > 0) pdf.addPage();
         pdf.addImage(imgData,'JPEG',0,0,PW,PH,undefined,'FAST');
         renderPage(idx+1);
@@ -944,7 +1053,7 @@ function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
         console.warn('Page render error:', e);
         renderPage(idx+1);
       });
-    }, idx===0 ? 800 : 200); // Extra delay on first page for logo to load
+    }, idx===0 ? 800 : 250);
   }
 
   renderPage(0);
@@ -1013,3 +1122,4 @@ document.addEventListener('click', function(e){
   while(btn && btn.id !== 'gate-submit-btn' && btn !== document.body){ btn = btn.parentElement; }
   if(btn && btn.id === 'gate-submit-btn'){ e.preventDefault(); submitGateForm(); }
 });
+
