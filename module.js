@@ -584,7 +584,7 @@ function submitGateForm(){
   .then(function(raw){
     var envelope; try{ envelope=JSON.parse(raw); }catch(e){ envelope={}; }
     var text = (envelope.content&&envelope.content[0]&&envelope.content[0].text)||'';
-    var brief; try{ brief=JSON.parse(text.replace(/```json|```/g,'').trim()); }catch(e){ brief=null; }
+    var brief = extractBriefJSON(text);
     setStatus('Building your PDF\u2026');
     setTimeout(function(){ generateAgenticPDF(fname+' '+lname, email, company, proc, cat, sub, brief); }, 200);
   })
@@ -592,6 +592,35 @@ function submitGateForm(){
     setStatus('Building your PDF\u2026');
     setTimeout(function(){ generateAgenticPDF(fname+' '+lname, email, company, proc, cat, sub, null); }, 200);
   });
+}
+
+// Robust JSON extraction from Claude responses
+function extractBriefJSON(text){
+  if(!text) return null;
+  // strip code fences
+  var t = text.replace(/```(?:json)?/gi,'').trim();
+  // try parsing whole thing
+  try{ return JSON.parse(t); }catch(e){}
+  // find first { and matching closing brace
+  var start = t.indexOf('{');
+  if(start < 0) return null;
+  var depth = 0, inStr = false, escape = false;
+  for(var i = start; i < t.length; i++){
+    var ch = t[i];
+    if(escape){ escape = false; continue; }
+    if(ch === '\\'){ escape = true; continue; }
+    if(ch === '"'){ inStr = !inStr; continue; }
+    if(inStr) continue;
+    if(ch === '{') depth++;
+    else if(ch === '}'){
+      depth--;
+      if(depth === 0){
+        try { return JSON.parse(t.slice(start, i+1)); }
+        catch(e){ return null; }
+      }
+    }
+  }
+  return null;
 }
 
 function setStatus(msg){
@@ -648,27 +677,90 @@ function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
 
   var bTime = parseTime(proc.b, false);
   var aTime = parseTime(proc.a, true);
+
+  // Convert a "12-18" or "1-2" or "25" string to its average minutes/hours value
+  function avgVal(numStr){
+    if(!numStr) return 0;
+    var parts = String(numStr).split(/[\-\u2013]/).map(function(s){return parseFloat(s);}).filter(function(n){return !isNaN(n);});
+    if(!parts.length) return 0;
+    return parts.reduce(function(a,b){return a+b;},0) / parts.length;
+  }
+  function toHours(v, unit){ return unit==='min' ? v/60 : v; }
+  var bHrs = toHours(avgVal(bTime.num), bTime.unit);
+  var aHrs = toHours(avgVal(aTime.num), aTime.unit);
+
+  // Saving %: prefer explicit "XX% time savings" in proc.a, else derive from before/after
   var savingMatch = (proc.a||'').match(/(\d+)%\s*time/i);
-  var savingPct = savingMatch ? savingMatch[1] : '';
+  var savingPct = '';
+  if(savingMatch){ savingPct = savingMatch[1]; }
+  else if(bHrs > 0 && aHrs > 0 && aHrs < bHrs){
+    savingPct = String(Math.round((bHrs - aHrs) / bHrs * 100));
+  }
+  // Weekly hours saved (assume 1 event / day, 5 working days)
+  var weeklyHrsSaved = (bHrs > 0 && aHrs >= 0 && bHrs > aHrs) ? Math.round((bHrs - aHrs) * 5) : 0;
 
   var bSteps = parseStepsLocal(proc.b);
   var aSteps = parseStepsLocal(proc.a);
 
-  // Parse metrics like "Response time -98%, Coverage +500%, Manual effort -94%"
+  // Parse metrics like "Response time -98%, Copy performance improvement (MoM) 75%, ..."
   function parseMetrics(str){
     if(!str) return [];
     return str.split(',').map(function(s){
       s = s.trim();
-      // Try to find a stat like "-98%" or "+500%" or "5x"
+      // Find a stat: "-98%", "+500%", "5x", "75%"
       var statMatch = s.match(/([\+\-]?\d+(?:\.\d+)?\s*(?:%|x))/i);
       var stat = statMatch ? statMatch[1].replace(/\s+/g,'') : '';
-      var label = stat ? s.replace(statMatch[1],'').trim().replace(/[:\-\u2013]+$/,'').trim() : s;
-      // Capitalize first letter of label
+      var label = s;
+      if(statMatch){
+        label = s.replace(statMatch[0],'').trim();
+      }
+      // Strip empty parens and trailing/leading punctuation
+      label = label.replace(/\(\s*\)/g,'').replace(/^[:\-\u2013\s]+|[:\-\u2013\s]+$/g,'').replace(/\s+/g,' ').trim();
       if(label) label = label.charAt(0).toUpperCase() + label.slice(1);
-      return {stat:stat, label:label || s};
+      return {stat:stat, label:label};
     }).filter(function(m){ return m.stat || m.label; }).slice(0,3);
   }
   var metrics = parseMetrics(proc.m);
+
+  // ── Fallback content for missing brief fields ─────────────────────
+  // We always want a useful PDF even when the Claude proxy fails.
+  function fallbackWhyNow(){
+    var pieces = [];
+    if(bHrs > 0) pieces.push('Teams spend ' + (bTime.num ? bTime.num + ' ' + bTime.unit : Math.round(bHrs)+' hours') + ' per event on this work manually.');
+    pieces.push(savingPct ? 'Automating it recovers ' + savingPct + '% of that time' + (weeklyHrsSaved?' \u2014 roughly ' + weeklyHrsSaved + ' analyst hours per week':'') + '.' : 'Automating it compresses cycle time and frees senior people for higher-leverage work.');
+    pieces.push('The competitive cost of staying manual shows up in pipeline velocity, not in the spreadsheet.');
+    return pieces.join(' ');
+  }
+  function fallbackApproach(){
+    var verb = (proc.v||'').replace(/^AI\s+(agents?\s+)?/i,'').replace(/\.$/,'').toLowerCase();
+    return 'An AI agent ' + (verb ? verb : 'handles the bulk of this work') + '. The system runs continuously, surfaces only what needs a human decision, and routes work to the right person with context attached. Humans approve, refine, and exception-handle. The repetitive 70% becomes background; the strategic 30% becomes your team\'s focus.';
+  }
+  function fallbackROI(){
+    var parts = [];
+    if(weeklyHrsSaved) parts.push('Recover roughly ' + weeklyHrsSaved + ' analyst hours per week.');
+    else if(savingPct) parts.push('Compress this workflow by ' + savingPct + '% on a per-event basis.');
+    parts.push('At a $90K loaded analyst rate, that pays for typical platform spend inside 30\u201360 days.');
+    parts.push('ROI compounds as the agent learns your domain and your team trusts it with bigger calls.');
+    return parts.join(' ');
+  }
+  var FALLBACK_PITFALLS = [
+    'Skipping the historical training data step \u2014 the agent over-flags noise as priority work.',
+    'Treating it as monitoring-only \u2014 the real ROI is in the agent drafting the next action, not just spotting it.',
+    'Not connecting to your CRM, Slack, or HubSpot \u2014 alerts that live in dashboards die in dashboards.'
+  ];
+  var FALLBACK_PLAN = {
+    week1: ['Audit your current workflow, SLAs, and tool stack for this process.','Define what "good" looks like \u2014 success metrics and decision thresholds.','Map the integration points (HubSpot, CRM, Slack, data warehouse).'],
+    week2: ['Train the agent on 60\u201390 days of historical examples from your data.','Build templates and approval routing for human-in-the-loop steps.','Run end-to-end test cases with your team in the loop.'],
+    week34: ['Launch on one product line, campaign, or segment first.','Tune thresholds and templates against first-week signals.','Expand to full coverage once accuracy targets are hit.']
+  };
+  // Merge fallbacks into brief
+  brief = brief || {};
+  if(!brief.why_now) brief.why_now = fallbackWhyNow();
+  if(!brief.agent_approach) brief.agent_approach = fallbackApproach();
+  if(!brief.roi) brief.roi = fallbackROI();
+  if(!brief.pitfalls || !brief.pitfalls.length) brief.pitfalls = FALLBACK_PITFALLS;
+  if(!brief.plan || (!brief.plan.week1 && !brief.plan.week2 && !brief.plan.week34)) brief.plan = FALLBACK_PLAN;
+  // Platforms: don't fabricate; leave as-is. Render handles empty.
 
   // Today's date
   var now = new Date();
@@ -709,7 +801,15 @@ function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
       }).join('') + '</div>';
   }
   function rPlatforms(pp){
-    if(!pp||!pp.length) return '<p style="font-size:12px;color:#aaa;font-style:italic">Data unavailable.</p>';
+    if(!pp||!pp.length){
+      // Sensible default — TPG always evaluates these classes of tools
+      return '<div style="background:'+BG_PAGE+';border:1px solid '+GRAY_L+';border-radius:8px;padding:14px 16px;grid-column:1 / -1">' +
+        '<div style="font-size:11.5px;color:'+CHAR+';line-height:1.6">' +
+          'TPG will recommend specific platforms in the working session based on your existing stack (HubSpot, Marketo, SFMC) and integration requirements. ' +
+          'Typical candidates for this process include enterprise tools at $1K\u2013$5K/mo, mid-market specialists at $300\u2013$1K/mo, and the agentic features inside your current marketing automation platform.' +
+        '</div>' +
+      '</div>';
+    }
     return pp.slice(0,3).map(function(p,i){
       return '<div style="background:#fff;border:1px solid '+GRAY_L+';border-radius:8px;padding:12px 13px;display:flex;flex-direction:column;gap:6px">' +
         '<div style="display:flex;justify-content:space-between;align-items:center">' +
@@ -772,12 +872,16 @@ function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
     '.page{width:794px;height:1123px;background:#fff;position:relative;overflow:hidden;display:flex;flex-direction:column}' +
   '</style>';
 
+  // Critical layout styles applied inline so they survive even if the <style> tag
+  // gets dropped from the rendered fragment.
+  var PAGE_INLINE = 'width:794px;height:1123px;background:#fff;position:relative;overflow:hidden;display:flex;flex-direction:column;box-sizing:border-box';
+
   // ═══════════════════════════════════════════════════════════════════
   // PAGE 1 — COVER
   // ═══════════════════════════════════════════════════════════════════
   var catSubStr = esc(cat) + (sub ? ' \u203a ' + esc(sub) : '');
   var coverHTML = CSS +
-    '<div class="page" style="background:'+NAVY_DEEP+';color:#fff">' +
+    '<div class="page" style="'+PAGE_INLINE+';background:'+NAVY_DEEP+';color:#fff">' +
       // Top lime stripe
       '<div style="height:6px;background:'+LIME+';flex-shrink:0"></div>' +
 
@@ -887,14 +991,14 @@ function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
   }
 
   var page2HTML = CSS +
-    '<div class="page">' +
+    '<div class="page" style="'+PAGE_INLINE+'">' +
       pageHeader('Strategic brief \u2014 '+esc(proc.p), '02') +
       '<div style="flex:1;padding:28px 40px 22px;display:flex;flex-direction:column">' +
 
         // Section tag
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
-          '<span style="background:'+LIME+';color:'+NAVY_DEEP+';padding:3px 8px;border-radius:3px;font-size:10px;font-weight:800;letter-spacing:1.2px">01</span>' +
-          '<span style="font-size:10px;font-weight:700;color:'+CHAR+';letter-spacing:2.5px;text-transform:uppercase">Strategic Brief</span>' +
+          '<span style="background:'+LIME+';color:'+NAVY_DEEP+';padding:3px 8px;border-radius:3px;font-size:10px;font-weight:800;letter-spacing:1.2px;white-space:nowrap">01</span>' +
+          '<span style="font-size:10px;font-weight:700;color:'+CHAR+';letter-spacing:2.5px;text-transform:uppercase;white-space:nowrap">Strategic Brief</span>' +
         '</div>' +
         '<h2 style="font-size:24px;font-weight:800;color:'+NAVY+';letter-spacing:-.6px;line-height:1.2;margin:0 0 22px;max-width:620px">Why this matters now, and how the agent works</h2>' +
 
@@ -949,14 +1053,14 @@ function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
   // PAGE 3 — IMPLEMENTATION
   // ═══════════════════════════════════════════════════════════════════
   var page3HTML = CSS +
-    '<div class="page">' +
+    '<div class="page" style="'+PAGE_INLINE+'">' +
       pageHeader('Implementation \u2014 30-day path to live', '03') +
       '<div style="flex:1;padding:28px 40px 22px;display:flex;flex-direction:column">' +
 
         // Section tag
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
-          '<span style="background:'+LIME+';color:'+NAVY_DEEP+';padding:3px 8px;border-radius:3px;font-size:10px;font-weight:800;letter-spacing:1.2px">02</span>' +
-          '<span style="font-size:10px;font-weight:700;color:'+CHAR+';letter-spacing:2.5px;text-transform:uppercase">Implementation</span>' +
+          '<span style="background:'+LIME+';color:'+NAVY_DEEP+';padding:3px 8px;border-radius:3px;font-size:10px;font-weight:800;letter-spacing:1.2px;white-space:nowrap">02</span>' +
+          '<span style="font-size:10px;font-weight:700;color:'+CHAR+';letter-spacing:2.5px;text-transform:uppercase;white-space:nowrap">Implementation</span>' +
         '</div>' +
         '<h2 style="font-size:24px;font-weight:800;color:'+NAVY+';letter-spacing:-.6px;line-height:1.2;margin:0 0 22px;max-width:620px">Your 30-day path to a live agent</h2>' +
 
@@ -1026,8 +1130,9 @@ function generateAgenticPDF(name, email, company, proc, cat, sub, brief){
     wrap.innerHTML = '';
     var frag = document.createElement('div');
     frag.innerHTML = pages[idx];
-    var pageEl = frag.querySelector('.page');
-    wrap.appendChild(pageEl);
+    // Append ALL children (style tag + page div) so the universal reset applies.
+    while(frag.firstChild) wrap.appendChild(frag.firstChild);
+    var pageEl = wrap.querySelector('.page');
     void wrap.offsetHeight;
 
     setTimeout(function(){
