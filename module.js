@@ -629,18 +629,17 @@ fetch('https://api.hsforms.com/submissions/v3/integration/submit/20715596/b49760
 
 // Call Claude for implementation brief, then generate PDF
 // Re-read S.proc in case it changed; guard against null
-var proc = _gateProc || S.proc;
-var cat  = S.cat || '';
-var sub  = S.sub || '';
-if(!proc){
-  var errEl2 = document.getElementById('gate-error');
-  if(errEl2){ errEl2.textContent = 'Please navigate back and select a process first.'; errEl2.style.display = ''; }
-  var gen2 = document.getElementById('gate-generating');
-  if(gen2) gen2.style.display = 'none';
-  var fields2 = document.getElementById('gate-form-fields');
-  if(fields2) fields2.style.display = '';
-  return;
-}
+var proc = _gateProc || S.proc || {
+  p: (document.getElementById('gate-proc-name') || {}).textContent || 'Selected AI Process',
+  v: (document.getElementById('aeo-a') || {}).textContent || '',
+  b: '',
+  a: '',
+  m: ''
+};
+
+var cat = S.cat || '';
+var sub = S.sub || '';
+_gateProc = proc;
 setStatus('Researching platforms and implementation approach…');
 var prompt = 'You are a senior AI implementation consultant at The Pedowitz Group. ' +
   'Process: ' + proc.p + '. Category: ' + cat + '. Sub-function: ' + sub + '. ' +
